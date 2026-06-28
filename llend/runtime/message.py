@@ -117,9 +117,7 @@ class Message(BaseModel):
     parent_id: UUID | None = None  # reply chain for tracing
 
     created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
-    expires_at: datetime | None = (
-        None  # TTL; if unread by expiry → dropped + error back to sender
-    )
+    expires_at: datetime | None = None  # TTL; if unread by expiry → dropped + error back to sender
 
     @property
     def is_expired(self) -> bool:

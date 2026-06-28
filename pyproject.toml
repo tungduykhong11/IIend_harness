@@ -9,6 +9,7 @@ description = "Python-native Hierarchical Multi-Agent Harness"
 requires-python = ">=3.11"
 dependencies = [
     "pydantic>=2.0,<3",
+    "langgraph>=1.0,<2",
 ]
 
 [project.optional-dependencies]

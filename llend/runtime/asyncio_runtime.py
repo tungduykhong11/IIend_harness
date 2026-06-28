@@ -11,11 +11,10 @@ import asyncio
 import logging
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
-from pathlib import Path
 from uuid import UUID, uuid4
 
 from llend.runtime.base import AgentRuntime
-from llend.runtime.checkpoint import Checkpoint, load_checkpoint, save_checkpoint
+from llend.runtime.checkpoint import Checkpoint
 from llend.runtime.lifecycle import (
     AgentState,
     AgentType,
@@ -135,7 +134,7 @@ class AsyncioRuntime(AgentRuntime):
         self._guard_closed()
         handle = self._get_handle(instance_id)
 
-        # Persist checkpoint
+        # Persist checkpoint in memory
         checkpoint = Checkpoint(
             interrupt_id=uuid4(),
             session_id=self._session_id or uuid4(),
@@ -146,7 +145,7 @@ class AsyncioRuntime(AgentRuntime):
             interrupt_options=options,
             ttl_seconds=self._checkpoint_ttl,
         )
-        save_checkpoint(checkpoint)
+        handle._last_checkpoint = checkpoint
 
         # Transition to INTERRUPT
         handle.state = transition(handle.state, AgentState.INTERRUPT)
@@ -162,8 +161,8 @@ class AsyncioRuntime(AgentRuntime):
         finally:
             handle.interrupt_future = None
 
-        # Load updated checkpoint
-        updated = load_checkpoint(checkpoint.interrupt_id, checkpoint.session_id)
+        # Read checkpoint from memory
+        updated = getattr(handle, "_last_checkpoint", None)
         human_note = updated.human_response if updated else None
 
         handle.context["interrupt_decision"] = decision
@@ -239,16 +238,11 @@ class AsyncioRuntime(AgentRuntime):
         if handle.interrupt_future.done():
             raise RuntimeError(f"Agent {instance_id} interrupt already resolved")
 
-        # Update the checkpoint on disk
-        # Find the checkpoint by agent_instance
-        base = _agent_checkpoint_base(self._session_id or uuid4())
-        for child in base.glob("*.json"):
-            cp = Checkpoint.model_validate_json(child.read_text(encoding="utf-8"))
-            if cp.agent_instance == instance_id and cp.human_response is None:
-                cp.human_response = note or decision
-                cp.resolved_at = datetime.now(UTC)
-                child.write_text(cp.model_dump_json(indent=2), encoding="utf-8")
-                break
+        # Update the in-memory checkpoint
+        cp = getattr(handle, "_last_checkpoint", None)
+        if cp is not None:
+            cp.human_response = note or decision
+            cp.resolved_at = datetime.now(UTC)
 
         handle.interrupt_future.set_result(decision)
 
@@ -348,13 +342,3 @@ class AsyncioRuntime(AgentRuntime):
             )
             orch_handle = self._agents[orchestrator_id]
             await orch_handle.queue.put(heartbeat)
-
-
-# ---------------------------------------------------------------------------
-# Internal helper (standalone)
-# ---------------------------------------------------------------------------
-
-
-def _agent_checkpoint_base(session_id: UUID) -> Path:
-    """Small helper for checkpoint file location."""
-    return Path.home() / ".llend" / "sessions" / str(session_id) / "checkpoints"
