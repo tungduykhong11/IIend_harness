@@ -19,7 +19,7 @@ dev = [
 ]
 
 [tool.setuptools.packages.find]
-include = ["llend_harness*"]
+include = ["llend*"]
 
 [tool.ruff]
 target-version = "py311"

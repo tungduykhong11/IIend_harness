@@ -14,15 +14,15 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from llend_harness.runtime.base import AgentRuntime
-from llend_harness.runtime.checkpoint import Checkpoint, load_checkpoint, save_checkpoint
-from llend_harness.runtime.lifecycle import (
+from llend.runtime.base import AgentRuntime
+from llend.runtime.checkpoint import Checkpoint, load_checkpoint, save_checkpoint
+from llend.runtime.lifecycle import (
     AgentState,
     AgentType,
     is_alive,
     transition,
 )
-from llend_harness.runtime.message import AgentErrorCode, Message, MsgType
+from llend.runtime.message import AgentErrorCode, Message, MsgType
 
 logger = logging.getLogger(__name__)
 

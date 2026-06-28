@@ -4,7 +4,7 @@ from datetime import UTC
 
 import pytest
 
-from llend_harness.runtime.lifecycle import (
+from llend.runtime.lifecycle import (
     AgentInstance,
     AgentState,
     AgentType,

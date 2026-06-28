@@ -6,9 +6,9 @@ from datetime import UTC, datetime, timedelta
 
 import pytest
 
-from llend_harness.runtime.asyncio_runtime import AsyncioRuntime
-from llend_harness.runtime.lifecycle import AgentState, AgentType
-from llend_harness.runtime.message import Message, MsgType
+from llend.runtime.asyncio_runtime import AsyncioRuntime
+from llend.runtime.lifecycle import AgentState, AgentType
+from llend.runtime.message import Message, MsgType
 
 
 @pytest.fixture

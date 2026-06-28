@@ -3,7 +3,7 @@
 from datetime import UTC, datetime, timedelta
 from uuid import UUID, uuid4
 
-from llend_harness.runtime.message import (
+from llend.runtime.message import (
     AgentErrorCode,
     Artifact,
     Message,

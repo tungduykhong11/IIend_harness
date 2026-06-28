@@ -6,7 +6,7 @@ from pathlib import Path
 
 import pytest
 
-from llend_harness.runtime.checkpoint import (
+from llend.runtime.checkpoint import (
     Checkpoint,
     _base_path,
     _checkpoint_path,

@@ -6,7 +6,7 @@ Skills and agents only depend on this interface — never on a concrete runtime.
 
 from abc import ABC, abstractmethod
 
-from llend_harness.runtime.message import Message
+from llend.runtime.message import Message
 
 
 class AgentRuntime(ABC):

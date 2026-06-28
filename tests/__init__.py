@@ -1,1 +1,1 @@
-"""Tests for llend_harness runtime core."""
+"""Tests for llend runtime core."""

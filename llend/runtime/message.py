@@ -17,7 +17,7 @@ from pydantic import BaseModel, Field
 
 
 class MsgType(StrEnum):
-    """All message types in the llend_harness protocol."""
+    """All message types in the llend protocol."""
 
     TASK_DISPATCH = "task.dispatch"
     TASK_RESULT = "task.result"
