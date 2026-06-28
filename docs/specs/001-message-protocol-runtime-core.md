@@ -10,7 +10,7 @@
 
 This spec defines:
 
-- **Message Protocol** — how Orchestrator, Executor, Reviewer, and Interrupt nodes communicate. No direct method calls. Everything through a message bus.
+- **Message Protocol** — how Orchestrator, Executor, Reviewer, Responder, and Interrupt nodes communicate. No direct method calls. Everything through a message bus.
 - **Runtime Core** — the asyncio event loop that owns agent lifecycle (spawn, run, kill), message routing, and interrupt/checkpoint.
 
 Out of scope: skill format, tool mapping, bootstrap, telemetry (those get their own specs).
@@ -25,14 +25,14 @@ Every message has the same envelope. This is the only contract agents need to un
 
 ```python
 from pydantic import BaseModel
-from typing import Any, Optional
+from typing import Any, Literal, Optional
 from uuid import UUID
 from datetime import datetime
 
 class Message(BaseModel):
     id: UUID                          # unique message ID
     session_id: UUID                  # which session (Orchestrator lifetime)
-    sender: str                       # agent type: "orchestrator" | "executor" | "reviewer"
+    sender: str                       # agent type: "orchestrator" | "executor" | "reviewer" | "responder"
     sender_instance: str              # instance id (orchestrator-1, executor-task3-run2)
     recipient: str                    # agent type or "orchestrator" (Orchestrator is always the hub)
     recipient_instance: Optional[str] # None = any; specific = route to exact instance
@@ -49,32 +49,105 @@ class Message(BaseModel):
 
 | msg_type | Direction | Payload | Meaning |
 |----------|-----------|---------|---------|
-| `task.dispatch` | Orch → Executor | `{task_id, skill_name, task_spec, context}` | Assign 1 task to a fresh Executor |
-| `task.result` | Executor → Orch | `{task_id, status, output, concerns?}` | Executor's final output |
-| `task.review` | Orch → Reviewer | `{task_id, task_spec, executor_output}` | Ask Reviewer to verify |
-| `task.verdict` | Reviewer → Orch | `{task_id, verdict, issues[], confidence}` | pass / fail + issues found |
-| `interrupt.raise` | Any → Orch | `{message, options[], context}` | Agent needs human judgment |
+| `task.dispatch` | Orch → Executor | `{task_id, skill_name, task_spec, skill_context}` | Assign 1 task to a fresh Executor. `skill_context` contains skill definition, allowed actions, action bindings, and output schema — see Spec 002 §9. |
+| `task.result` | Executor → Orch | `{task_id, status: TaskStatus, output, concerns?: str[]}` | Executor's final output. `status` uses `TaskStatus` enum. `concerns` is Executor's own doubts (optional). Output validated against skill's output schema if present (Spec 002 §9.2). |
+| `task.review` | Orch → Reviewer | `{task_id, task_spec, executor_output, review_criteria?}` | Ask Reviewer to verify. Reviewer checks: (a) output matches output schema (Spec 002), (b) output fulfills `task_spec` intent, (c) no hallucinations, factual errors, or missing data. Optional `review_criteria` can override default checks. |
+| `task.verdict` | Reviewer → Orch | `{task_id, verdict: Verdict, issues: ReviewIssue[], confidence: float}` | `verdict` uses `Verdict` enum. `issues` is a list of `ReviewIssue` objects. `confidence` is 0.0–1.0. |
+| `interrupt.raise` | Any → Orch | `{message, options: str[], context: {task_id, current_step, relevant_summary?}}` | Agent needs human judgment. `context` carries enough info for human to decide without reading full history. |
 | `interrupt.response` | Orch → Agent | `{decision, human_note?}` | Human's answer fed back |
 | `session.start` | Runtime → Orch | `{goal, params}` | New session initiated |
-| `session.complete` | Orch → Runtime | `{summary, artifacts[]}` | Final result |
-| `agent.error` | Any → Orch | `{error_code, detail, recoverable?}` | Agent crashed / timed out |
+| `session.complete` | Orch → Runtime | `{summary: str, artifacts: Artifact[]}` | Final result. `Artifact = {name, path, type, description?}` — file paths relative to session output dir. |
+| `agent.error` | Any → Orch | `{error_code: AgentErrorCode, detail: str, recoverable: bool}` | Agent crashed / timed out / validation failed. See `AgentErrorCode` enum. |
 | `agent.heartbeat` | Any → Orch | `{}` | Still alive (if idle > 30s) |
 
-### 2.3 Routing Rule
+### 2.2.1 Supporting Enums
+
+```python
+from enum import Enum
+
+class MsgType(str, Enum):
+    """All valid message types."""
+    TASK_DISPATCH = "task.dispatch"
+    TASK_RESULT = "task.result"
+    TASK_REVIEW = "task.review"
+    TASK_VERDICT = "task.verdict"
+    INTERRUPT_RAISE = "interrupt.raise"
+    INTERRUPT_RESPONSE = "interrupt.response"
+    SESSION_START = "session.start"
+    SESSION_COMPLETE = "session.complete"
+    AGENT_ERROR = "agent.error"
+    AGENT_HEARTBEAT = "agent.heartbeat"
+    RESPOND_QUERY = "respond.query"              # Spec 003
+    RESPOND_REPLY = "respond.reply"              # Spec 003
+    RESPOND_REQUEST_TOOL = "respond.request_tool" # Spec 003
+    RESPOND_TOOL_RESULT = "respond.tool_result"   # Spec 003
+
+class TaskStatus(str, Enum):
+    """Executor's final status in task.result."""
+    DONE = "done"
+    DONE_WITH_CONCERNS = "done_with_concerns"  # Executor flags own doubts
+    PARTIAL = "partial"                        # Incomplete but useful
+    ERROR = "error"                            # Execution failed
+
+class Verdict(str, Enum):
+    """Reviewer's judgment in task.verdict."""
+    PASS = "pass"
+    PASS_WITH_WARNINGS = "pass_with_warnings"  # Acceptable but noted
+    FAIL = "fail"                               # Must re-do
+
+class AgentErrorCode(str, Enum):
+    """Error codes for agent.error messages."""
+    TIMEOUT = "timeout"                    # Agent exceeded time limit
+    LLM_ERROR = "llm_error"                # LLM API error / rate limit
+    TOOL_ERROR = "tool_error"              # Action/tool execution failed
+    VALIDATION_ERROR = "validation_error"  # Output failed schema validation
+    CRASH = "crash"                        # Unhandled exception
+    INTERRUPT_TIMEOUT = "interrupt_timeout" # Human didn't respond in TTL
+    UNKNOWN = "unknown"                    # Catch-all
+
+class ReviewIssue(BaseModel):
+    """An issue found by Reviewer in task.verdict — distinct from Spec 002's ValidationIssue (skill validation)."""
+    severity: Literal["critical", "important", "minor"]
+    field: str          # which part of the output has the issue
+    message: str        # human-readable description
+
+class Artifact(BaseModel):
+    """A file produced during the session."""
+    name: str           # human-readable label
+    path: str           # path relative to session output directory
+    type: str           # "csv" | "xlsx" | "json" | "pdf" | "txt" | "other"
+    description: Optional[str] = None
+```
+
+### 2.3 Message Expiry
+
+Messages with `expires_at < now()` are **dropped by the Runtime** before delivery. When a message expires unread:
+
+1. Runtime logs the expiry with message `id` and `msg_type`
+2. Runtime sends `agent.error(TIMEOUT, detail="Message {id} expired unread", recoverable=True)` back to `sender`
+3. The sender decides: retry with new TTL, or escalate
+
+This applies to ALL message types. For `interrupt.raise`, the interrupt checkpoint also has its own TTL (§3.4) — if BOTH expire, the interrupt is terminated.
+
+### 2.4 Routing Rule
 
 **Orchestrator is the hub.** All messages route through Orchestrator. No Executor talks directly to Reviewer. No peer-to-peer.
 
 ```
 Executor ──→ Orchestrator ──→ Reviewer
                 │
+                ├──→ Responder          ← Spec 003
+                │       │
+                │       └──→ respond.request_tool → Orchestrator → Executor
+                │
                 ├──→ Interrupt (human)
                 │
                 └──→ Executor (re-spawn on review fail)
 ```
 
-This is simpler than a full mesh and makes every decision traceable. It also means the Orchestrator always knows the full state of every in-flight task.
+This is simpler than a full mesh and makes every decision traceable. It also means the Orchestrator always knows the full state of every in-flight task and conversation.
 
-### 2.4 Reply Chains
+### 2.5 Reply Chains
 
 `parent_id` links messages into trees. When a Reviewer issues a verdict, `parent_id` points to the `task.dispatch` that started the chain. This enables full audit tracing: "show me the entire lifecycle of Task 3".
 
@@ -142,9 +215,9 @@ States:
 | State | Meaning | Can transition to |
 |-------|---------|-------------------|
 | `INIT` | Agent created, not yet running | RUNNING |
-| `RUNNING` | Processing a task | INTERRUPT, COMPLETE, ERROR, DEAD |
+| `RUNNING` | Processing a task (Executor/Reviewer) or answering a question (Responder) | INTERRUPT, COMPLETE, ERROR, DEAD |
 | `INTERRUPT` | Paused, waiting for human | RUNNING (resume), ERROR (timeout), DEAD |
-| `COMPLETE` | Task finished successfully | DEAD |
+| `COMPLETE` | Task finished (Executor/Reviewer) or session ended (Responder/Orchestrator) | DEAD |
 | `ERROR` | Crashed or timed out | DEAD |
 | `DEAD` | Terminal | — |
 
@@ -160,6 +233,26 @@ When an agent raises `interrupt.raise`, the runtime:
 
 If human doesn't respond in `TTL` (default 24h), interrupt times out → `ERROR` state → Orchestrator decides: retry / skip / escalate.
 
+**Checkpoint file schema** (`~/.llend/sessions/{session_id}/checkpoints/{interrupt_id}.json`):
+
+```python
+class Checkpoint(BaseModel):
+    """Saved agent state for interrupt/resume."""
+    interrupt_id: UUID
+    session_id: UUID
+    agent_instance: str              # e.g. "executor-task1-run1"
+    agent_type: str                  # "executor" | "reviewer" | "responder"
+    agent_state: str                 # always "INTERRUPT" when checkpointed
+    reply_chain: list[UUID]          # all message IDs in the current task chain
+    task_context: dict[str, Any]     # current task_spec, partial results, etc.
+    interrupt_message: str           # the human-facing question
+    interrupt_options: list[str]     # choices presented to human
+    created_at: datetime
+    ttl_seconds: int = 86400         # 24h default, configurable per interrupt
+    human_response: Optional[str] = None  # filled on resume
+    resolved_at: Optional[datetime] = None
+```
+
 ### 3.5 Concurrency Model
 
 ```
@@ -168,17 +261,19 @@ If human doesn't respond in `TTL` (default 24h), interrupt times out → `ERROR`
                     │ Event Loop  │
                     └──────┬──────┘
                            │
-              ┌────────────┼────────────┐
-              ▼            ▼            ▼
-        Orchestrator   Executor     Reviewer
-        (1 instance)   (0..N)       (0..N, one per task)
+         ┌─────────────────┼─────────────────┐
+         ▼                 ▼                  ▼
+   Orchestrator        Executor           Reviewer
+   (1 instance)        (0..N)             (0..N, one per task)
+         │
+         └── Responder (1 instance, Spec 003)
                            │
                      spawn → run → complete → kill
                      (sequential per task, but
                       tasks can be parallel if independent)
 ```
 
-**Rule:** one Executor per task at a time. If a task fails review, kill the old Executor, spawn a new one. Two tasks CAN run concurrently if the Orchestrator determines they're independent (e.g., scrape eBay + scrape Amazon in parallel, then merge).
+**Rule:** one Executor per task at a time. If a task fails review, kill the old Executor, spawn a new one. Two tasks CAN run concurrently if the Orchestrator determines they're independent (e.g., scrape eBay + scrape Amazon in parallel, then merge). Responder runs alongside Executors — conversations do not block task execution.
 
 ---
 
@@ -190,31 +285,58 @@ If human doesn't respond in `TTL` (default 24h), interrupt times out → `ERROR`
 2. Runtime spawns Orchestrator
    → Message(session.start, goal="Phân tích thị trường iPhone 15 trên eBay")
 
-3. Orchestrator decomposes into plan:
+3. Orchestrator spawns Responder (Spec 003) — lives entire session for conversational Q&A
+
+4. Orchestrator decomposes into plan:
    Task 1: data_provider (scrape eBay iPhone 15)
    Task 2: analyze_pricing
    Task 3: write_report
 
-4. Orchestrator → Message(task.dispatch, skill="data_provider", ...)
+5. Orchestrator → Message(task.dispatch, skill="data_provider", ...)
    Runtime spawns Executor #1 (INIT → RUNNING)
 
-5. Executor #1 crawls eBay, hits 15,000 listings
+6. Executor #1 crawls eBay, hits 15,000 listings
    → Message(interrupt.raise, "15k dòng, phân tích hết hay lọc? [A/B/C]")
 
-6. Runtime: checkpoint → notify human → block Executor #1 (INTERRUPT)
+7. Runtime: checkpoint → notify human → block Executor #1 (INTERRUPT)
 
-7. Human: "Chọn B - 1,000 dòng mới nhất"
+8. Human: "Chọn B - 1,000 dòng mới nhất"
    → Runtime: checkpoint load → Message(interrupt.response, "B") → Executor #1 resumes
 
-8. Executor #1 finishes → Message(task.result, status=DONE, output=clean_dataset)
+9. Executor #1 finishes → Message(task.result, status=DONE, output=clean_dataset)
 
-9. Orchestrator → Message(task.review, spec=..., output=clean_dataset)
-   Runtime spawns Reviewer #1
+10. Orchestrator → Message(task.review, spec=..., output=clean_dataset)
+    Runtime spawns Reviewer #1
 
-10. Reviewer #1 → Message(task.verdict, verdict=pass, issues=[])
+11. Reviewer #1 → Message(task.verdict, verdict=pass, issues=[])
 
-11. Orchestrator marks Task 1 complete, proceeds to Task 2...
+12. Orchestrator marks Task 1 complete, proceeds to Task 2...
 ```
+
+### 4.1 Walkthrough: Parallel Tasks
+
+When tasks are independent, they run concurrently:
+
+```
+1. Human: "So sánh giá iPhone 15 trên eBay và Amazon"
+
+2. Orchestrator decomposes:
+   Task 1: data_provider (eBay)
+   Task 2: data_provider (Amazon)
+   Task 3: compare_pricing (depends on Task 1 + Task 2)
+
+3. Orchestrator spawns Executor #1 (eBay) AND Executor #2 (Amazon) IN PARALLEL
+   → Both execute simultaneously via asyncio.gather()
+
+4. Executor #1 finishes → task.result(eBay dataset)
+   Executor #2 finishes → task.result(Amazon dataset)
+
+5. Both complete → Orchestrator dispatches Task 3 with both datasets as input
+
+6. Executor #3 runs compare_pricing → task.result(comparison report)
+```
+
+**Rule for parallel dispatch:** Orchestrator checks `SkillPipeline.build_plan()` — tasks at the same depth with no interdependency are marked `parallelizable=True`. Orchestrator calls `asyncio.gather()` on all parallelizable tasks at the same depth before proceeding to the next depth.
 
 ---
 
@@ -236,11 +358,11 @@ llend_harness/
 
 ## 6. Open Questions
 
-- **Q1:** Interrupt TTL — is 24h a sensible default? Should be configurable per interrupt?
-- **Q2:** Checkpoint format — JSON or pickle? JSON for now (debuggable), pickle later if needed.
-- **Q3:** Should `asyncio.gather()` be the only parallelism primitive, or do we want a task queue (Redis/AMQP) from day 1? → **Start with asyncio only.** Add queue when scaling demands it.
-- **Q4:** Message serialization — JSON over what transport? In-process for v0 (same event loop). Network transport (Redis pub/sub) for v1.
+- **Q1:** Interrupt TTL — is 24h a sensible default? Should be configurable per interrupt? → **Configurable per interrupt** confirmed. `Checkpoint.ttl_seconds` overrides the 24h default.
+- **Q2:** ~~Checkpoint format — JSON or pickle?~~ **Resolved:** JSON. Schema defined in §3.4. Debuggable, human-readable. Pickle only if performance demands it later.
+- **Q3:** Should `asyncio.gather()` be the only parallelism primitive, or do we want a task queue (Redis/AMQP) from day 1? → **Start with asyncio only.** Parallel dispatch demonstrated in §4.1. Add queue when scaling demands it.
+- **Q4:** ~~Message serialization — JSON over what transport?~~ **Resolved:** v0 = in-process Python object passing within the same asyncio event loop. No serialization, no network transport. Messages are plain Python `Message` objects passed via `asyncio.Queue` between agents. Checkpoints are the ONLY place where messages are serialized (to JSON on disk, §3.4). v1 may add Redis pub/sub for distributed agents.
 
 ---
 
-*Next spec: 002 — Skill Format & Registry*
+*Next spec: 003 — Responder Agent & Conversation Module*
