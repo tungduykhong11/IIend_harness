@@ -4,6 +4,7 @@ A runtime that orchestrates AI agents through composable skills.
 Domain-agnostic: not tied to coding workflows.
 """
 
+from llend.registry.action_dispatcher import ActionDispatcher, ActionDispatchError
 from llend.registry.models import (
     ActionBinding,
     ResolutionError,
@@ -53,6 +54,8 @@ __all__ = [
     "Verdict",
     # Spec 002 — registry
     "ActionBinding",
+    "ActionDispatchError",
+    "ActionDispatcher",
     "CircularDependencyError",
     "ExecutionPlan",
     "parse_inputs",

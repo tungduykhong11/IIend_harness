@@ -1,7 +1,7 @@
-"""Handler for data_provider skill — scraping orchestration.
+"""Handler for data_provider skill — scraping orchestration.  Spec 002 §4.3.
 
 Provides the ``fetch_web_page`` and ``parse_listing_html`` custom actions
-that are NOT covered by the global tool bridge.
+that are NOT covered by the global tool bridge (§5.1).
 """
 
 import logging

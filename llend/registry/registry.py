@@ -201,9 +201,10 @@ class SkillRegistry:
     # ------------------------------------------------------------------
 
     async def watch(self) -> None:
-        """Start filesystem watcher on *skills_dir*.  §6.1.
+        """Start filesystem watcher on *skills_dir* and *mappings.toml*.  §6.1, §5.3.
 
-        On change: re-discover affected skill, re-validate, update cache.
+        On skill file change: re-discover affected skill, re-validate, update cache.
+        On mappings.toml change: call ``ToolBridge.reload()``.
         Runs as a background asyncio task.  Uses ``watchdog`` if installed;
         gracefully degrades to a no-op otherwise.
         """
@@ -221,9 +222,9 @@ class SkillRegistry:
                 if event.is_directory:
                     return
                 path = Path(event.src_path)
+                # §6.1: skill file changes
                 if path.name in ("skill.md", "handler.py", "models.py"):
                     logger.info("Hot-reload: change detected in %s", path)
-                    # Re-discover affected skill directory
                     skill_dir = path.parent
                     md_path = skill_dir / "skill.md"
                     if md_path.exists():
@@ -235,11 +236,18 @@ class SkillRegistry:
                             logger.info("Hot-reload: re-parsed %r", meta.name)
                         except Exception:
                             logger.exception("Hot-reload: failed to re-parse %s", md_path)
+                # §5.3: mappings.toml changes
+                elif path.name == "mappings.toml":
+                    logger.info("Hot-reload: mappings.toml changed, reloading")
+                    registry_ref._tool_bridge.reload()
 
         observer = Observer()
         observer.schedule(SkillChangeHandler(), str(self._skills_dir), recursive=True)
+        # Also watch tool_bridge mappings.toml — §5.3
+        mappings_dir = str(self._tool_bridge.mappings_path.parent)
+        observer.schedule(SkillChangeHandler(), mappings_dir, recursive=False)
         observer.start()
-        logger.info("Hot-reload watcher started on %s", self._skills_dir)
+        logger.info("Hot-reload watcher started on %s + %s", self._skills_dir, mappings_dir)
 
         # Run until cancelled
         try:
@@ -360,13 +368,25 @@ class SkillRegistry:
                         except Exception:
                             logger.exception("Failed to generate JSON schema for %r", output)
 
-                # Input schemas — generate simple descriptors
+                # Input schemas — generate JSON Schema for Pydantic models,
+                # simple type descriptors for primitives  §3.3
+                for param_name, type_spec in meta.inputs.items():
+                    # Strip default value part for model lookup
+                    type_name = type_spec.split("=")[0].strip()
+                    model_cls = getattr(module, type_name, None)
+                    if model_cls is not None:
+                        try:
+                            input_schemas[param_name] = model_cls.model_json_schema()
+                            continue
+                        except Exception:
+                            logger.exception(
+                                "Failed to generate JSON schema for input %r", param_name
+                            )
+                    input_schemas[param_name] = {"type": type_spec}
+            else:
+                # No models.py — generate primitive input descriptors
                 for param_name, type_spec in meta.inputs.items():
                     input_schemas[param_name] = {"type": type_spec}
-        else:
-            # No models.py — generate primitive input descriptors
-            for param_name, type_spec in meta.inputs.items():
-                input_schemas[param_name] = {"type": type_spec}
 
         return output_schema, input_schemas
 

@@ -5,6 +5,7 @@ need to work with skills: ``SkillRegistry`` for managing skills, ``SkillPipeline
 for building execution plans, and the Pydantic models defining the skill format.
 """
 
+from llend.registry.action_dispatcher import ActionDispatcher, ActionDispatchError
 from llend.registry.models import (
     ActionBinding,
     ResolutionError,
@@ -23,6 +24,9 @@ from llend.registry.registry import SkillRegistry
 from llend.registry.validator import validate_skill
 
 __all__ = [
+    # §4.4 — action execution
+    "ActionDispatcher",
+    "ActionDispatchError",
     # §6 — main classes
     "SkillRegistry",
     "SkillPipeline",

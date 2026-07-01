@@ -1,4 +1,4 @@
-"""Pydantic models for data_provider skill — scraped product listings."""
+"""Pydantic models for data_provider skill — scraped product listings.  Spec 002 §3.2."""
 
 from pydantic import BaseModel, Field
 

@@ -320,11 +320,14 @@ def _discover_custom_actions(skill_dir: Path) -> set[str]:
     return actions
 
 
-def _discover_handler_class(module: object, skill_name: str) -> type | None:
+def _discover_handler_class(
+    module: object, skill_name: str
+) -> type | None:
     """Find the handler class in *module*.  §4.3 discovery convention.
 
     1. Look for ``<PascalCaseSkillName>Skill`` (e.g. ``analyze_pricing`` → ``AnalyzePricingSkill``).
     2. Fallback: first class with ≥1 public async method that has a docstring.
+    3. If multiple classes match rule 2, use the first and log a warning.
     """
     # Rule 1: exact name match
     pascal = "".join(word.capitalize() for word in skill_name.split("_")) + "Skill"
@@ -333,6 +336,7 @@ def _discover_handler_class(module: object, skill_name: str) -> type | None:
             return obj
 
     # Rule 2: first class with at least one discoverable method
+    candidates: list[type] = []
     for _name, obj in inspect.getmembers(module, inspect.isclass):
         for meth_name, meth in inspect.getmembers(obj, predicate=inspect.isfunction):
             if meth_name.startswith("_"):
@@ -340,9 +344,18 @@ def _discover_handler_class(module: object, skill_name: str) -> type | None:
             if not meth.__doc__:
                 continue
             if inspect.iscoroutinefunction(meth):
-                return obj
+                candidates.append(obj)
+                break  # one match per class is enough
 
-    return None
+    if len(candidates) > 1:
+        logger.warning(
+            "Multiple handler class candidates for %r: %s — using %r",
+            skill_name,
+            [c.__name__ for c in candidates],
+            candidates[0].__name__,
+        )
+
+    return candidates[0] if candidates else None
 
 
 def _import_module_from_path(module_name: str, path: Path) -> object | None:
