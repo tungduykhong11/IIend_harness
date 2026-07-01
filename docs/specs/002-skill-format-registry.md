@@ -11,7 +11,7 @@
 
 This spec defines:
 
-- **Skill Format** — how a skill is declared (SKILL.md + optional handler.py), its metadata, inputs, outputs, and actions.
+- **Skill Format** — how a skill is declared (skill.md + optional handler.py), its metadata, inputs, outputs, and actions.
 - **Action Vocabulary** — the abstraction layer between skills and concrete tool implementations. Skills declare *what they need* (actions), never *how to do it* (tools).
 - **Tool Bridge** — global mapping from actions → concrete implementations. Swap implementations without touching skill code.
 - **Skill Registry** — discovery, validation, version resolution, and action binding resolution.
@@ -29,17 +29,17 @@ Out of scope: skill execution (belongs to Executor, Spec 001), skill authoring t
 ```
 skills/
 └── analyze_pricing/
-    ├── SKILL.md          # Required — skill definition (YAML frontmatter + markdown body)
+    ├── skill.md          # Required — skill definition (YAML frontmatter + markdown body)
     ├── handler.py        # Optional — custom Python actions
     └── models.py         # Optional — Pydantic models for typed I/O
 ```
 
 **Rule:**
-- `SKILL.md` only → simple skill. Executor/LLM follows markdown instructions.
-- `SKILL.md` + `handler.py` → complex skill. Custom Python logic for domain-specific actions.
+- `skill.md` only → simple skill. Executor/LLM follows markdown instructions.
+- `skill.md` + `handler.py` → complex skill. Custom Python logic for domain-specific actions.
 - `+ models.py` → typed skill. Input/output validated with Pydantic. **Recommended for all skills.**
 
-### 2.2 SKILL.md Format
+### 2.2 skill.md Format
 
 ```markdown
 ---
@@ -202,7 +202,7 @@ When Executor receives `task.dispatch`, the `skill_context` includes JSON Schema
 
 **How Registry resolves the output model:**
 
-1. SKILL.md declares `outputs: AnalysisReport`
+1. skill.md declares `outputs: AnalysisReport`
 2. Registry imports `skills/analyze_pricing/models.py`
 3. Registry looks up the class named `AnalysisReport` in the module
 4. Verifies it's a `BaseModel` subclass
@@ -213,11 +213,11 @@ If `outputs` references a model that doesn't exist in `models.py` (or `models.py
 ```python
 # Registry generates this on resolve():
 skill_context = {
-    "skill_md": "...",            # raw SKILL.md content
+    "skill_md": "...",            # raw skill.md content
     "allowed_actions": [...],
     "action_bindings": {...},
     "output_schema": AnalysisReport.model_json_schema(),   # ← from models.py, resolved by name
-    "input_schemas": {                                      # ← parsed from SKILL.md inputs:
+    "input_schemas": {                                      # ← parsed from skill.md inputs:
         "dataset": {"type": "list[dict]"},                  #   primitive type (no Pydantic model)
         "target_item": {"type": "str"},                     #   primitive type
         "brackets": {"type": "list[int]", "default": [0,300,500,1000]},  # primitive with default
@@ -545,7 +545,7 @@ class SkillRegistry:
     # ── Discovery ──────────────────────────────
 
     async def discover(self) -> list[SkillMeta]:
-        """Scan skills_dir for all SKILL.md files, parse YAML frontmatter.
+        """Scan skills_dir for all skill.md files, parse YAML frontmatter.
         Returns metadata for all discovered skills. Does NOT validate yet."""
         ...
 
@@ -627,7 +627,7 @@ from pathlib import Path
 from typing import Any, Literal
 
 class SkillMeta(BaseModel):
-    """Parsed from SKILL.md frontmatter."""
+    """Parsed from skill.md frontmatter."""
     name: str
     version: str
     description: str
@@ -657,7 +657,7 @@ class ActionBinding(BaseModel):
 class Skill(SkillMeta):
     """Fully resolved skill, ready for dispatch."""
     path: Path                          # skill directory path
-    skill_md: str                       # raw SKILL.md content
+    skill_md: str                       # raw skill.md content
     output_schema: dict | None = None   # JSON Schema from Pydantic model (None if no models.py)
     input_schemas: dict[str, dict]      # {param_name: json_schema}
     action_bindings: dict[str, ActionBinding]  # merged global + custom
@@ -891,7 +891,7 @@ Spec 002 does not add new `msg_type` values. The existing `task.dispatch` and `t
 1. Runtime starts
    → SkillRegistry.discover()
    → scans skills/ recursively
-   → finds: data_provider/SKILL.md, analyze_pricing/SKILL.md
+   → finds: data_provider/skill.md, analyze_pricing/skill.md
    → returns [SkillMeta(data_provider), SkillMeta(analyze_pricing)]
 
 2. ToolBridge loads mappings.toml
@@ -950,11 +950,11 @@ llend_harness/
 │   └── checkpoint.py     # Interrupt save/load
 ├── skills/               # Spec 002 — skill definitions
 │   ├── data_provider/
-│   │   ├── SKILL.md
+│   │   ├── skill.md
 │   │   ├── handler.py
 │   │   └── models.py     # ProductListing, ScrapeConfig, ScrapeResult
 │   └── analyze_pricing/
-│       ├── SKILL.md
+│       ├── skill.md
 │       ├── handler.py
 │       └── models.py     # MarketSummary, OutlierReport, PriceSegment, AnalysisReport
 ├── registry/             # Spec 002 — discovery & resolution
