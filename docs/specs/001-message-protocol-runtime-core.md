@@ -24,25 +24,28 @@ Out of scope: skill format, tool mapping, bootstrap, telemetry (those get their 
 Every message has the same envelope. This is the only contract agents need to understand:
 
 ```python
-from pydantic import BaseModel
-from typing import Any, Literal, Optional
-from uuid import UUID
-from datetime import datetime
+from pydantic import BaseModel, Field
+from typing import Any
+from uuid import UUID, uuid4
+from datetime import UTC, datetime
 
 class Message(BaseModel):
-    id: UUID                          # unique message ID
-    session_id: UUID                  # which session (Orchestrator lifetime)
-    sender: str                       # agent type: "orchestrator" | "executor" | "reviewer" | "responder"
-    sender_instance: str              # instance id (orchestrator-1, executor-task3-run2)
-    recipient: str                    # agent type or "orchestrator" (Orchestrator is always the hub)
-    recipient_instance: Optional[str] # None = any; specific = route to exact instance
+    id: UUID = Field(default_factory=uuid4)       # unique message ID
+    session_id: UUID                              # which session (Orchestrator lifetime)
+    sender: str                                   # agent type: "orchestrator" | "executor" | "reviewer" | "responder"
+    sender_instance: str                          # instance id (orchestrator-1, executor-task3-run2)
+    recipient: str                                # agent type or "orchestrator" (Orchestrator is always the hub)
+    recipient_instance: str | None = None         # None = any; specific = route to exact instance
 
-    msg_type: str                     # see §2.2
-    payload: dict[str, Any]           # type-specific content
-    parent_id: Optional[UUID]         # reply chain (for tracing)
+    msg_type: MsgType                             # see §2.2
+    payload: dict[str, Any] = Field(default_factory=dict)
+    parent_id: UUID | None = None                 # reply chain (for tracing) — §2.5
 
-    created_at: datetime
-    expires_at: Optional[datetime]    # TTL; if unread by expiry → dropped + error back to sender
+    created_at: datetime = Field(default_factory=lambda: datetime.now(UTC))
+    expires_at: datetime | None = None            # TTL; if unread by expiry → dropped + error back to sender — §2.3
+
+    @property
+    def is_expired(self) -> bool: ...             # §2.3 convenience check
 ```
 
 ### 2.2 Message Types (msg_type)
@@ -63,9 +66,9 @@ class Message(BaseModel):
 ### 2.2.1 Supporting Enums
 
 ```python
-from enum import Enum
+from enum import StrEnum  # Python 3.11+
 
-class MsgType(str, Enum):
+class MsgType(StrEnum):
     """All valid message types."""
     TASK_DISPATCH = "task.dispatch"
     TASK_RESULT = "task.result"
@@ -82,20 +85,20 @@ class MsgType(str, Enum):
     RESPOND_REQUEST_TOOL = "respond.request_tool" # Spec 003
     RESPOND_TOOL_RESULT = "respond.tool_result"   # Spec 003
 
-class TaskStatus(str, Enum):
+class TaskStatus(StrEnum):
     """Executor's final status in task.result."""
     DONE = "done"
     DONE_WITH_CONCERNS = "done_with_concerns"  # Executor flags own doubts
     PARTIAL = "partial"                        # Incomplete but useful
     ERROR = "error"                            # Execution failed
 
-class Verdict(str, Enum):
+class Verdict(StrEnum):
     """Reviewer's judgment in task.verdict."""
     PASS = "pass"
     PASS_WITH_WARNINGS = "pass_with_warnings"  # Acceptable but noted
     FAIL = "fail"                               # Must re-do
 
-class AgentErrorCode(str, Enum):
+class AgentErrorCode(StrEnum):
     """Error codes for agent.error messages."""
     TIMEOUT = "timeout"                    # Agent exceeded time limit
     LLM_ERROR = "llm_error"                # LLM API error / rate limit
@@ -116,7 +119,14 @@ class Artifact(BaseModel):
     name: str           # human-readable label
     path: str           # path relative to session output directory
     type: str           # "csv" | "xlsx" | "json" | "pdf" | "txt" | "other"
-    description: Optional[str] = None
+    description: str | None = None
+
+class AgentType(StrEnum):
+    """Well-known agent roles in the harness topology — §1 Agent Topology."""
+    ORCHESTRATOR = "orchestrator"  # "sếp": nhận yêu cầu, lập plan, dispatch
+    EXECUTOR = "executor"          # "làm": constructive, hoàn thành 1 task
+    REVIEWER = "reviewer"          # "kiểm": adversarial, refute, bắt lỗi
+    RESPONDER = "responder"        # conversational Q&A — Spec 003
 ```
 
 ### 2.3 Message Expiry
@@ -155,42 +165,74 @@ This is simpler than a full mesh and makes every decision traceable. It also mea
 
 ## 3. Runtime Core
 
-### 3.1 Event Loop
+### 3.1 Runtime Backend
 
-Plain `asyncio` — no LangGraph, no Celery. Rationale:
+**v0 uses LangGraph** as the state management and execution engine. Rationale:
 
-- Avoid framework lock-in. LangGraph's interrupt pattern inspired us, but their runtime is tied to their graph model.
-- `asyncio` is Python's native concurrency model. Every LLM SDK (OpenAI, Anthropic) already supports it.
-- **Future: replaceable backend.** The `AgentRuntime` is an ABC. v0 ships `AsyncioRuntime`. v1 could add `RayRuntime` or `CeleryRuntime` without changing skill code.
+- **State graph is a natural fit.** The agent lifecycle (§3.3) is inherently a state machine with branching (RUNNING → INTERRUPT → RUNNING / ERROR). LangGraph's `StateGraph` + checkpointing (`InMemorySaver`) models this cleanly without reinventing the wheel.
+- **Interrupt is built-in.** LangGraph's `interrupt()` primitive maps directly to our HITL requirement (§3.4) — pause execution, persist checkpoint, wait for human, resume. No need to hand-roll this on raw asyncio.
+- **Less code.** LangGraph handles the plumbing (state transitions, checkpoint serialization, graph execution) so we focus on agent logic, not event-loop mechanics.
+- **Replaceable backend preserved.** The `AgentRuntime` is an ABC. v0 ships `LangGraphRuntime`. The `AsyncioRuntime` (plain asyncio + Queue) is also kept as a lightweight alternative for simple use cases. v1 could add `RayRuntime` or `CeleryRuntime` without changing skill code.
 
 ### 3.2 AgentRuntime Interface
 
 ```python
 class AgentRuntime(ABC):
-    """Abstract agent execution backend."""
+    """Abstract agent execution backend.
+
+    Owns agent lifecycle (§3.3), message routing (§2.4), and the
+    interrupt / human-in-the-loop primitive (§3.4).
+    """
 
     @abstractmethod
     async def spawn(self, agent_type: str, context: dict) -> str:
-        """Create a new agent instance. Returns instance_id."""
+        """Create a new agent instance. Returns instance_id.
+
+        Sets the agent's initial state to INIT then RUNNING (§3.3),
+        and starts any background tasks (e.g. heartbeat, §2.2).
+        """
         ...
 
     @abstractmethod
     async def send(self, message: Message) -> None:
-        """Route a message to its recipient."""
+        """Route a message to its recipient.
+
+        Resolves ``recipient`` / ``recipient_instance`` (§2.4).  If the
+        message has expired (§2.3) drops it and sends ``agent.error``
+        back to the sender.
+        """
         ...
 
     @abstractmethod
     async def interrupt(self, instance_id: str, prompt: str, options: list[str]) -> str:
-        """Pause agent, ask human, return decision. Blocks until human responds."""
+        """Pause agent, ask human, return decision. Blocks until human responds.
+
+        Saves a checkpoint to disk (§3.4), notifies the human channel,
+        transitions the agent to INTERRUPT (§3.3), and blocks on an
+        ``asyncio.Future`` until ``resolve_interrupt()`` is called.
+        Raises ``InterruptTimeoutError`` if TTL expires (§3.4 ¶2).
+        """
         ...
 
     @abstractmethod
     async def kill(self, instance_id: str) -> None:
-        """Terminate an agent instance. Idempotent."""
+        """Terminate an agent instance. Idempotent.
+
+        §3.3: any state → DEAD.  Cancels pending interrupt futures and
+        cleans up checkpoint files (§3.4).
+        """
+        ...
+
+    @abstractmethod
+    async def shutdown(self) -> None:
+        """Gracefully stop all agents, cancel pending tasks, and release
+        resources.  After ``shutdown()`` the runtime must reject further
+        ``send()`` calls.
+        """
         ...
 ```
 
-### 3.3 Agent Lifecycle (AsyncioRuntime)
+### 3.3 Agent Lifecycle
 
 ```
                   spawn()
@@ -236,22 +278,68 @@ If human doesn't respond in `TTL` (default 24h), interrupt times out → `ERROR`
 **Checkpoint file schema** (`~/.llend/sessions/{session_id}/checkpoints/{interrupt_id}.json`):
 
 ```python
+class InterruptTimeoutError(Exception):
+    """Raised inside ``runtime.interrupt()`` when TTL expires without human response.
+
+    The caller (Executor / Reviewer / Orchestrator) catches this to decide:
+    retry, skip, or escalate.
+    """
+    def __init__(self, interrupt_id: UUID, ttl_seconds: int) -> None: ...
+
 class Checkpoint(BaseModel):
     """Saved agent state for interrupt/resume."""
     interrupt_id: UUID
     session_id: UUID
     agent_instance: str              # e.g. "executor-task1-run1"
     agent_type: str                  # "executor" | "reviewer" | "responder"
-    agent_state: str                 # always "INTERRUPT" when checkpointed
-    reply_chain: list[UUID]          # all message IDs in the current task chain
-    task_context: dict[str, Any]     # current task_spec, partial results, etc.
+    agent_state: str = "INTERRUPT"   # always "INTERRUPT" when checkpointed
+    reply_chain: list[UUID] = []     # all message IDs in the current task chain
+    task_context: dict[str, Any] = {}  # current task_spec, partial results, etc.
     interrupt_message: str           # the human-facing question
-    interrupt_options: list[str]     # choices presented to human
+    interrupt_options: list[str] = []  # choices presented to human
     created_at: datetime
-    ttl_seconds: int = 86400         # 24h default, configurable per interrupt
-    human_response: Optional[str] = None  # filled on resume
-    resolved_at: Optional[datetime] = None
+    ttl_seconds: int = 86400         # 24h default, configurable per interrupt (Q1)
+    human_response: str | None = None  # filled on resume
+    resolved_at: datetime | None = None
+
+    # Disk persistence methods (§3.4 ¶2)
+    def save(self, base_dir: Path | None = None) -> Path: ...
+    @classmethod
+    def load(cls, session_id: UUID, interrupt_id: UUID, base_dir: Path | None = None) -> Checkpoint | None: ...
+    def delete(self, base_dir: Path | None = None) -> None: ...
+    @classmethod
+    def list_for_session(cls, session_id: UUID, base_dir: Path | None = None) -> list[UUID]: ...
 ```
+
+#### 3.4.1 Notification Channels
+
+```python
+class NotificationChannel(ABC):
+    """Contract for a human-notification transport — §3.4 step 3."""
+
+    @abstractmethod
+    async def notify_interrupt(self, checkpoint: Checkpoint) -> None:
+        """Called when an agent raises ``interrupt.raise``."""
+        ...
+
+    @abstractmethod
+    async def notify_interrupt_timeout(self, checkpoint: Checkpoint) -> None:
+        """Called when a checkpoint's TTL expires without a human response."""
+        ...
+
+class ConsoleNotificationChannel(NotificationChannel):
+    """Print interrupt notifications to stdout — v0 default."""
+
+class MultiChannel(NotificationChannel):
+    """Fan-out to multiple ``NotificationChannel`` instances.
+
+    A failure in one channel does **not** prevent subsequent channels
+    from being called — errors are logged and swallowed.
+    """
+    def __init__(self, *channels: NotificationChannel) -> None: ...
+```
+
+Channels mentioned in spec but implemented later: Telegram, Discord, WebSocket (§3.4 step 3).
 
 ### 3.5 Concurrency Model
 
@@ -343,14 +431,16 @@ When tasks are independent, they run concurrently:
 ## 5. File Layout
 
 ```
-llend_harness/
+llend/
 ├── runtime/
 │   ├── __init__.py
-│   ├── base.py          # AgentRuntime ABC
-│   ├── asyncio_runtime.py  # v0 implementation
-│   ├── message.py       # Message, msg_type enum, routing
-│   ├── lifecycle.py     # Agent states, spawn/kill transitions
-│   └── checkpoint.py    # Interrupt save/load
+│   ├── base.py              # AgentRuntime ABC (§3.2)
+│   ├── asyncio_runtime.py   # Lightweight asyncio backend (§3.1)
+│   ├── langgraph_runtime.py # v0 primary backend — LangGraph state graph (§3.1)
+│   ├── message.py           # Message envelope + enums (§2.1, §2.2, §2.2.1)
+│   ├── lifecycle.py         # Agent states, spawn/kill transitions (§3.3)
+│   ├── checkpoint.py        # Checkpoint model + disk persistence (§3.4)
+│   └── notifications.py     # Human notification channels (§3.4 step 3)
 ├── ...
 ```
 
