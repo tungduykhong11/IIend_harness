@@ -1,0 +1,43 @@
+# Tool Bridge — global action→tool bindings.  Spec 002 §5.1.
+#
+# This is the single source of truth for mapping action names to concrete
+# Python modules.  Skills declare *actions*; this file tells the runtime
+# *which tool* to invoke for each action.
+#
+# Format (per action):
+#
+#     [actions.<action_name>]
+#     tool = "<python_module>"          # importable module name
+#     function = "<function_or_method>" # dotted attribute path on the module
+#     timeout_ms = <int>                # optional, default 30000
+#     retry = <int>                     # optional, default 0
+#
+#     [actions.<action_name>.config]    # optional extra kwargs
+#     <key> = <value>
+
+[actions.fetch_web_page]
+tool = "crawl4ai"
+function = "AsyncWebCrawler.arun"
+timeout_ms = 30000
+retry = 3
+
+[actions.fetch_web_page.config]
+stealth_mode = true
+user_agent = "llend-harness/0.1"
+
+[actions.parse_listing_html]
+tool = "llend_harness.parsers"
+function = "parse_product_listing"
+timeout_ms = 5000
+
+[actions.export_csv]
+tool = "pandas"
+function = "DataFrame.to_csv"
+
+[actions.export_csv.config]
+index = false
+encoding = "utf-8-sig"
+
+[actions.export_excel]
+tool = "openpyxl"
+function = "Workbook.save"

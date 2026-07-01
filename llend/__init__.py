@@ -4,6 +4,21 @@ A runtime that orchestrates AI agents through composable skills.
 Domain-agnostic: not tied to coding workflows.
 """
 
+from llend.registry.models import (
+    ActionBinding,
+    ResolutionError,
+    Skill,
+    SkillMeta,
+    ValidationIssue,
+)
+from llend.registry.parser import parse_inputs
+from llend.registry.pipeline import (
+    CircularDependencyError,
+    ExecutionPlan,
+    SkillPipeline,
+    TaskSpec,
+)
+from llend.registry.registry import SkillRegistry
 from llend.runtime.asyncio_runtime import AsyncioRuntime
 from llend.runtime.base import AgentRuntime
 from llend.runtime.checkpoint import Checkpoint
@@ -18,8 +33,10 @@ from llend.runtime.message import (
     TaskStatus,
     Verdict,
 )
+from llend.tool_bridge.bridge import ToolBridge
 
 __all__ = [
+    # Spec 001 — runtime
     "AgentErrorCode",
     "AgentInstance",
     "AgentRuntime",
@@ -34,4 +51,17 @@ __all__ = [
     "ReviewIssue",
     "TaskStatus",
     "Verdict",
+    # Spec 002 — registry
+    "ActionBinding",
+    "CircularDependencyError",
+    "ExecutionPlan",
+    "parse_inputs",
+    "ResolutionError",
+    "Skill",
+    "SkillMeta",
+    "SkillPipeline",
+    "SkillRegistry",
+    "TaskSpec",
+    "ToolBridge",
+    "ValidationIssue",
 ]
