@@ -29,7 +29,7 @@ from datetime import UTC, datetime
 from pathlib import Path
 from uuid import UUID, uuid4
 
-from llend.runtime.base import AgentRuntime
+from llend.runtime.base import AgentRuntime, MessageHandler
 from llend.runtime.checkpoint import (
     Checkpoint,
     InterruptTimeoutError,
@@ -74,6 +74,9 @@ class _AgentHandle:
 
     # Interrupt machinery — set when agent is paused (§3.4 step 4)
     interrupt_future: asyncio.Future[str] | None = None
+
+    # Message handler — registered by agent via register_handler() (Spec 003 §5.1)
+    handler: MessageHandler | None = None
 
 
 # ---------------------------------------------------------------------------
@@ -189,6 +192,13 @@ class AsyncioRuntime(AgentRuntime):
         handle = self._agents[instance_id]
         await handle.queue.put(message)
 
+        # Spec 003 §5.1: Fire registered handler (fire-and-forget to avoid reentrancy)
+        if handle.handler is not None:
+            asyncio.create_task(
+                handle.handler(message),
+                name=f"handler-{instance_id}",
+            )
+
     async def interrupt(self, instance_id: str, prompt: str, options: list[str]) -> str:
         """Pause *instance_id*, ask human, block until response.  §3.2, §3.4.
 
@@ -273,6 +283,19 @@ class AsyncioRuntime(AgentRuntime):
         logger.info("interrupt resolved instance_id=%s decision=%s", instance_id, decision)
 
         return decision
+
+    async def register_handler(
+        self, instance_id: str, handler: MessageHandler
+    ) -> None:
+        """Register a message handler for *instance_id*.  Spec 003 §5.1.
+
+        Replaces any previously registered handler.  The handler is invoked
+        via ``asyncio.create_task`` (fire-and-forget) so the runtime's
+        ``send()`` is never blocked by handler logic.
+        """
+        self._guard_closed()
+        handle = self._get_handle(instance_id)
+        handle.handler = handler
 
     async def kill(self, instance_id: str) -> None:
         """Terminate *instance_id*.  Idempotent — calling on a dead agent is a no-op.  §3.2.

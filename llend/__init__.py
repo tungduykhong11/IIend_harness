@@ -4,6 +4,7 @@ A runtime that orchestrates AI agents through composable skills.
 Domain-agnostic: not tied to coding workflows.
 """
 
+from llend.llm.client import AnthropicClient, LLMClient, LLMStreamEvent
 from llend.registry.action_dispatcher import ActionDispatcher, ActionDispatchError
 from llend.registry.models import (
     ActionBinding,
@@ -20,6 +21,20 @@ from llend.registry.pipeline import (
     TaskSpec,
 )
 from llend.registry.registry import SkillRegistry
+from llend.responder.agent import ResponderAgent
+from llend.responder.context import (
+    ConversationTurn,
+    SessionContext,
+    TaskResultSummary,
+)
+from llend.responder.memory import UserProfile
+from llend.responder.persona import Persona
+from llend.responder.stream import (
+    make_error_reply,
+    make_final_reply,
+    make_reply_chunk,
+    reassemble_chunks,
+)
 from llend.runtime.asyncio_runtime import AsyncioRuntime
 from llend.runtime.base import AgentRuntime
 from llend.runtime.checkpoint import Checkpoint
@@ -67,4 +82,19 @@ __all__ = [
     "TaskSpec",
     "ToolBridge",
     "ValidationIssue",
+    # Spec 003 — responder
+    "ConversationTurn",
+    "Persona",
+    "ResponderAgent",
+    "SessionContext",
+    "TaskResultSummary",
+    "UserProfile",
+    "make_error_reply",
+    "make_final_reply",
+    "make_reply_chunk",
+    "reassemble_chunks",
+    # Spec 003 — LLM client
+    "AnthropicClient",
+    "LLMClient",
+    "LLMStreamEvent",
 ]

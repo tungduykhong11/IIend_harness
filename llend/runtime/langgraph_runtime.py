@@ -40,7 +40,7 @@ from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command, interrupt
 from typing_extensions import TypedDict
 
-from llend.runtime.base import AgentRuntime
+from llend.runtime.base import AgentRuntime, MessageHandler
 from llend.runtime.checkpoint import (
     Checkpoint,
     InterruptTimeoutError,
@@ -97,6 +97,9 @@ class _AgentHandle:
     run_task: asyncio.Task[None] | None = None   # §3.5: graph execution task
     interrupt_future: asyncio.Future[str] | None = None  # §3.4 step 4
     spawned_at: datetime = field(default_factory=lambda: datetime.now(UTC))
+
+    # Message handler — registered by agent via register_handler() (Spec 003 §5.1)
+    handler: MessageHandler | None = None
 
 
 # Avoid circular import — CompiledStateGraph is the return type of .compile()
@@ -294,6 +297,13 @@ class LangGraphRuntime(AgentRuntime):
             self._run_agent(handle), name=f"run-{instance_id}"
         )
 
+        # Spec 003 §5.1: Fire registered handler (fire-and-forget)
+        if handle.handler is not None:
+            asyncio.create_task(
+                handle.handler(message),
+                name=f"handler-{instance_id}",
+            )
+
     async def interrupt(self, instance_id: str, prompt: str, options: list[str]) -> str:
         """Pause *instance_id*, ask human, return chosen option.  §3.2, §3.4.
 
@@ -376,6 +386,19 @@ class LangGraphRuntime(AgentRuntime):
         handle.state = transition(handle.state, AgentState.RUNNING)  # §3.3: resume
         logger.info("interrupt resolved instance_id=%s decision=%s", instance_id, decision)
         return decision
+
+    async def register_handler(
+        self, instance_id: str, handler: MessageHandler
+    ) -> None:
+        """Register a message handler for *instance_id*.  Spec 003 §5.1.
+
+        Replaces any previously registered handler.  The handler is invoked
+        via ``asyncio.create_task`` (fire-and-forget) so the runtime's
+        ``send()`` is never blocked by handler logic.
+        """
+        self._guard_closed()
+        handle = self._get_handle(instance_id)
+        handle.handler = handler
 
     async def kill(self, instance_id: str) -> None:
         """Terminate *instance_id*.  Idempotent.  §3.2.
