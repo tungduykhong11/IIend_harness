@@ -13,9 +13,16 @@ Spec reference
   (plus ``shutdown`` — practical addition for graceful cleanup)
 """
 
+from __future__ import annotations
+
 from abc import ABC, abstractmethod
+from collections.abc import Awaitable, Callable
 
 from llend.runtime.message import Message
+
+#: Signature for a message handler callback registered by an agent.
+#: Receives the delivered ``Message`` and returns nothing (fire-and-forget).
+MessageHandler = Callable[[Message], Awaitable[None]]
 
 
 class AgentRuntime(ABC):
@@ -74,6 +81,24 @@ class AgentRuntime(ABC):
 
         Must be **idempotent** — calling ``kill()`` on an already-dead
         agent (§3.3: DEAD) is a no-op, not an error.
+        """
+        ...
+
+    # ---- §3.3.1 / Spec 003: register_handler -----------------------
+
+    @abstractmethod
+    async def register_handler(
+        self, instance_id: str, handler: MessageHandler
+    ) -> None:
+        """Register an async callback that fires for every message delivered to
+        *instance_id*.  Spec 003 §5.1.
+
+        Only one handler per instance is supported; calling again replaces the
+        previous handler.  The handler is invoked via ``asyncio.create_task``
+        (fire-and-forget) so the runtime's ``send()`` is never blocked by
+        handler logic.
+
+        Handlers MUST be reentrant-safe: they may be called concurrently.
         """
         ...
 

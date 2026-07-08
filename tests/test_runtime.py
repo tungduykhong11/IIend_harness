@@ -442,3 +442,65 @@ async def _make_msg(
         msg_type=msg_type,
         payload={},
     )
+
+
+# =============================================================================
+# register_handler tests  —  Spec 003 §5.1
+# =============================================================================
+
+
+class TestRegisterHandler:
+    """Tests for the register_handler() mechanism added in Spec 003."""
+
+    async def test_send_triggers_registered_handler(self, runtime_with_orch):
+        runtime = runtime_with_orch
+        eid = await runtime.spawn(AgentType.RESPONDER.value, {})
+        received: list[Message] = []
+
+        async def handler(msg: Message) -> None:
+            received.append(msg)
+
+        await runtime.register_handler(eid, handler)
+        msg = await _make_msg(runtime, MsgType.RESPOND_QUERY, "responder", eid)
+        await runtime.send(msg)
+        # Allow handler task to run
+        await asyncio.sleep(0.1)
+        assert len(received) == 1
+        assert received[0].msg_type == MsgType.RESPOND_QUERY
+
+    async def test_register_handler_replaces_previous(self, runtime_with_orch):
+        runtime = runtime_with_orch
+        eid = await runtime.spawn(AgentType.RESPONDER.value, {})
+        calls1: list[Message] = []
+        calls2: list[Message] = []
+
+        async def h1(msg: Message) -> None:
+            calls1.append(msg)
+
+        async def h2(msg: Message) -> None:
+            calls2.append(msg)
+
+        await runtime.register_handler(eid, h1)
+        await runtime.register_handler(eid, h2)
+        msg = await _make_msg(runtime, MsgType.RESPOND_QUERY, "responder", eid)
+        await runtime.send(msg)
+        await asyncio.sleep(0.1)
+        assert len(calls1) == 0  # replaced
+        assert len(calls2) == 1  # active
+
+    async def test_handler_exception_does_not_crash_runtime(self, runtime_with_orch):
+        runtime = runtime_with_orch
+        eid = await runtime.spawn(AgentType.RESPONDER.value, {})
+
+        async def crashing_handler(msg: Message) -> None:
+            raise ValueError("handler crashed")
+
+        await runtime.register_handler(eid, crashing_handler)
+        msg = await _make_msg(runtime, MsgType.RESPOND_QUERY, "responder", eid)
+        # Should not raise
+        await runtime.send(msg)
+        await asyncio.sleep(0.1)
+        # Agent should still be alive (not DEAD or ERROR)
+        state = runtime.get_handle_state(eid)
+        assert state != AgentState.ERROR
+        assert state != AgentState.DEAD
