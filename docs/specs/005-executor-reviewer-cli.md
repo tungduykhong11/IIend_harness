@@ -1,4 +1,4 @@
-# Spec 005: Executor Agent, Reviewer Agent, LLM Providers & CLI Bootstrap
+# Spec 005: Executor Agent, LLM Providers & CLI Bootstrap
 
 **Status:** Draft
 **Date:** 2026-07-09
@@ -9,16 +9,20 @@
 
 ## 1. Motivation
 
-Spec 001 defines the agent topology (Orchestrator → Executor → Reviewer). Spec 002 defines skills and the ActionDispatcher. Spec 003 defines the Responder. Spec 004 defines the Orchestrator.
+Spec 001 defines the agent topology (Orchestrator → Executor → Reviewer). Spec 002 defines skills and the ActionDispatcher. Spec 003 defines the Responder. Spec 004 defines the Orchestrator and the Reviewer's adversarial prompt (§4.5).
 
-But the Executor and Reviewer exist only as **agent types** — there is no class that actually:
+But the **Executor** exists only as an **agent type** — there is no class that actually:
 
-- Receives `task.dispatch`, calls an LLM in a ReAct loop, invokes tools via ActionDispatcher, and returns `task.result`
-- Receives `task.review`, calls an LLM with an adversarial prompt, parses a structured verdict, and returns `task.verdict`
+- Receives `task.dispatch`
+- Calls an LLM in a ReAct loop
+- Invokes tools via ActionDispatcher
+- Returns `task.result`
 
 Additionally, only `AnthropicClient` exists as an LLM backend. There is no DeepSeek provider, no provider factory, and no CLI entry point to bootstrap the harness.
 
-**This spec closes those gaps.** After Spec 005, the harness will be runnable end-to-end with `python -m llend`.
+> **Note on ReviewerAgent:** The Reviewer agent type, message types (`task.review` / `task.verdict`), and adversarial prompt are already fully specified in Spec 001 (§2.2) and Spec 004 (§4.5). The `ReviewerAgent` class implementation is a thin wrapper (~50 lines): receive `task.review` → call LLM with the already-constructed `system_prompt` → parse JSON verdict → send `task.verdict`. It needs no new spec content.
+
+**This spec closes the remaining gaps.** After Spec 005, the harness will be runnable end-to-end with `python -m llend`.
 
 ---
 
@@ -31,8 +35,8 @@ Additionally, only `AnthropicClient` exists as an LLM backend. There is no DeepS
 | **Role** | Execute 1 skill (1 task in the plan) |
 | **Mindset** | Constructor — build the output, call tools as needed, report concerns honestly |
 | **Lifespan** | Per task — spawned fresh, killed after `task.result` |
-| **Input** | `task.dispatch` message with `{task_id, skill_name, task_spec, skill_context}` |
-| **Output** | `task.result` message with `{task_id, status: TaskStatus, output, concerns?}` |
+| **Input** | `task.dispatch` message with `{task_id, skill_name, task_spec, skill_context}` (Spec 001 §2.2) |
+| **Output** | `task.result` message with `{task_id, status: TaskStatus, output, concerns?}` (Spec 001 §2.2) |
 | **Internal state** | Stateless beyond the current task |
 
 ### 2.2 Lifecycle
@@ -158,83 +162,39 @@ llend/executor/
 
 ## 3. Reviewer Agent
 
-### 3.1 Role & Mindset
+> **Already specified in existing specs.** No new spec content needed.
 
-| | Reviewer |
-|---|---|
-| **Role** | Adversarially verify 1 Executor output |
-| **Mindset** | Skeptic — find flaws, refute claims, catch errors |
-| **Lifespan** | Per task — spawned fresh after Executor, killed after `task.verdict` |
-| **Input** | `task.review` message with `{task_id, original_task_spec, executor_output, concerns_from_executor?, schema_validation_issues?, system_prompt}` |
-| **Output** | `task.verdict` message with `{task_id, verdict: Verdict, issues: ReviewIssue[], confidence: float}` |
+| Aspect | Where defined |
+|--------|--------------|
+| Agent type, lifecycle states | Spec 001 §1, §3.3 |
+| `task.review` / `task.verdict` message types | Spec 001 §2.2 |
+| Adversarial system prompt | Spec 004 §4.5 (`REVIEWER_SYSTEM_PROMPT`) |
+| ReviewIssue model, Verdict enum | Spec 001 §2.2.1 |
+| Adjudication after verdict | Spec 004 §4.3–§4.4 |
+| Error handling (crash, timeout, LLM error) | Spec 004 §10.1 |
 
-### 3.2 Lifecycle
-
-```
-Runtime spawns Reviewer
-        │
-        ▼
-    INIT ──→ RUNNING
-        │
-        ├── Receive task.review
-        ├── Construct adversarial prompt from payload
-        ├── Call LLM (single call, no tools)
-        ├── Parse structured verdict JSON
-        ├── Send task.verdict
-        └── COMPLETE → DEAD
-```
-
-### 3.3 System Prompt
-
-The adversarial prompt is defined in Spec 004 §4.5 and already implemented as `REVIEWER_SYSTEM_PROMPT` in `llend/orchestrator/executor.py`. The Reviewer agent receives the fully-constructed prompt in `task.review.payload.system_prompt` and sends it directly to the LLM.
-
-### 3.4 Processing Flow
+The implementation is a thin class:
 
 ```python
-async def _process_review(review_msg, llm_client):
-    system_prompt = review_msg.payload.get("system_prompt", "")
-    executor_output = review_msg.payload.get("executor_output", {})
-    task_spec = review_msg.payload.get("original_task_spec", {})
+class ReviewerAgent:
+    """Receives task.review → calls LLM with system_prompt → sends task.verdict."""
 
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": "Review the Executor's output carefully."},
-    ]
+    async def start(self):
+        await self._runtime.register_handler(self._instance_id, self._handle_message)
 
-    response = await llm_client.generate(messages)
-
-    # Parse structured verdict
-    parsed = json.loads(response.text)
-    return {
-        "verdict": parsed.get("verdict", "fail"),
-        "issues": [
-            ReviewIssue(
-                severity=issue.get("severity", "minor"),
-                field=issue.get("field", ""),
-                message=issue.get("message", ""),
-            )
-            for issue in parsed.get("issues", [])
-        ],
-        "confidence": float(parsed.get("confidence", 0.5)),
-    }
+    async def _handle_message(self, msg: Message):
+        if msg.msg_type != MsgType.TASK_REVIEW:
+            return
+        system_prompt = msg.payload.get("system_prompt", "")
+        response = await self._llm.generate(
+            messages=[{"role": "user", "content": "Review carefully."}],
+            system=system_prompt,
+        )
+        verdict_data = json.loads(response)
+        await self._send_verdict(msg, verdict_data)
 ```
 
-### 3.5 Error Handling
-
-| Scenario | Response |
-|----------|----------|
-| LLM API error | Send `agent.error(LLM_ERROR)`, Orchestrator auto-passes with warning |
-| Output doesn't parse | Send `agent.error(VALIDATION_ERROR)`, Orchestrator auto-passes with warning |
-| Timeout | Send `agent.error(TIMEOUT)`, Orchestrator auto-passes with warning |
-| Unhandled exception | Send `agent.error(CRASH)`, Orchestrator re-spawns Reviewer (max 2) |
-
-### 3.6 File Layout
-
-```
-llend/reviewer/
-├── __init__.py          # Re-exports
-└── agent.py             # ReviewerAgent class
-```
+File: `llend/reviewer/agent.py` (~50-60 dòng).
 
 ---
 
@@ -242,7 +202,7 @@ llend/reviewer/
 
 ### 4.1 Background
 
-DeepSeek V4 Pro exposes an **OpenAI-compatible API**. We can implement `DeepSeekClient` by wrapping the `openai` SDK's `AsyncOpenAI` client, exactly as `AnthropicClient` wraps `anthropic.AsyncAnthropic`.
+DeepSeek V4 Pro exposes an **OpenAI-compatible API**. We implement `DeepSeekClient` by wrapping the `openai` SDK's `AsyncOpenAI` client, exactly as `AnthropicClient` wraps `anthropic.AsyncAnthropic`.
 
 ### 4.2 API Details
 
@@ -354,18 +314,16 @@ def create_llm_client(provider: str, **kwargs) -> LLMClient:
 
 ### 4.5 Model Override Per Role
 
-Per Spec 004 §17, different Orchestrator functions use different models:
+Per Spec 004 §17, different Orchestrator functions use different models. When using DeepSeek, all roles default to `deepseek-chat`:
 
-| Function | Default Model | Config Key |
-|----------|--------------|------------|
-| Classification | `deepseek-chat` (cheap) | `orchestrator.classification_model` |
-| Summarization | `deepseek-chat` (cheap) | `orchestrator.summarization_model` |
-| Synthesis | `deepseek-chat` (capable) | `orchestrator.synthesis_model` |
-| Executor (task) | `deepseek-chat` | `executor.model` |
-| Reviewer | `deepseek-chat` | `reviewer.model` |
-| Responder | `deepseek-chat` | `responder.model` |
-
-All default to `deepseek-chat` when using DeepSeek provider. With Anthropic, defaults are `claude-haiku-4-5-20251001` (cheap) and `claude-sonnet-5` (capable).
+| Function | Config Key | Default (DeepSeek) | Default (Anthropic) |
+|----------|------------|-------------------|---------------------|
+| Classification | `orchestrator.classification_model` | `deepseek-chat` | `claude-haiku-4-5-20251001` |
+| Summarization | `orchestrator.summarization_model` | `deepseek-chat` | `claude-haiku-4-5-20251001` |
+| Synthesis | `orchestrator.synthesis_model` | `deepseek-chat` | `claude-sonnet-5` |
+| Executor (task) | `executor.model` | `deepseek-chat` | `claude-sonnet-4-20250514` |
+| Reviewer | `reviewer.model` | `deepseek-chat` | `claude-sonnet-4-20250514` |
+| Responder | `responder.model` | `deepseek-chat` | `claude-sonnet-4-20250514` |
 
 ---
 
@@ -495,7 +453,6 @@ async def main():
             user_input = input("> ")
             if user_input.lower() in ("exit", "quit"):
                 break
-            # Send to orchestrator
             msg = Message(
                 session_id=runtime.session_id,
                 sender="human",
@@ -512,40 +469,28 @@ async def main():
         await runtime.shutdown()
 ```
 
-### 6.3 File Layout
+### 6.3 File Layout (After Spec 005)
 
 ```
 llend/
-├── __main__.py           # Entry point: python -m llend
+├── __main__.py           # NEW: entry point — python -m llend
 ├── __init__.py
-├── settings.toml
+├── settings.toml         # Updated: +[llm], [executor], [reviewer]
 ├── llm/
 │   ├── __init__.py
-│   └── client.py         # + DeepSeekClient, + create_llm_client()
+│   └── client.py         # Updated: +DeepSeekClient, +create_llm_client()
 ├── executor/
-│   ├── __init__.py
-│   └── agent.py          # ExecutorAgent
+│   ├── __init__.py       # NEW
+│   └── agent.py          # NEW: ExecutorAgent
 ├── reviewer/
-│   ├── __init__.py
-│   └── agent.py          # ReviewerAgent
-├── orchestrator/         # (already exists)
-├── responder/            # (already exists)
-├── runtime/              # (already exists, will be patched)
-├── registry/             # (already exists)
-├── skills/               # (already exists)
-└── tool_bridge/          # (already exists)
-```
-
-### 6.4 pyproject.toml Update
-
-```toml
-[project.scripts]
-llend = "llend.__main__:main"
-
-[project.optional-dependencies]
-deepseek = ["openai>=1.0"]
-anthropic = ["anthropic>=0.30"]
-all = ["openai>=1.0", "anthropic>=0.30"]
+│   ├── __init__.py       # NEW
+│   └── agent.py          # NEW: ReviewerAgent (thin wrapper)
+├── orchestrator/         # (existing)
+├── responder/            # (existing)
+├── runtime/              # Patched: +register_agent_type()
+├── registry/             # (existing)
+├── skills/               # (existing)
+└── tool_bridge/          # (existing)
 ```
 
 ---
@@ -574,16 +519,16 @@ model = "deepseek-chat"         # model for Reviewer LLM calls
 class OrchestratorConfig(BaseModel):
     # ... existing fields from Spec 004 §13.1 ...
 
-    # LLM provider  §5.1
+    # LLM provider
     llm_provider: str = "deepseek"
     llm_api_key_env: str = "DEEPSEEK_API_KEY"
     llm_base_url: str = "https://api.deepseek.com"
 
-    # Executor  §5.2
+    # Executor
     executor_model: str = "deepseek-chat"
     executor_max_tool_calls: int = 20
 
-    # Reviewer  §5.3
+    # Reviewer
     reviewer_model: str = "deepseek-chat"
 ```
 
@@ -597,7 +542,6 @@ class OrchestratorConfig(BaseModel):
 @pytest.mark.asyncio
 async def test_full_task_execution_cycle():
     """Orchestrator → Executor → Reviewer → complete."""
-    # Setup with mock LLM that returns predetermined responses
     mock_llm = MagicMock(spec=LLMClient)
     mock_llm.generate = AsyncMock(side_effect=[
         # Classification: "task"
@@ -617,7 +561,6 @@ async def test_full_task_execution_cycle():
     runtime = AsyncioRuntime()
     # Register factories, create orchestrator, start session...
 
-    # Send a human message
     msg = Message(
         session_id=runtime.session_id,
         sender="human", sender_instance="cli",
@@ -626,12 +569,8 @@ async def test_full_task_execution_cycle():
         payload={"text": "Phân tích giá iPhone 15"},
     )
     await runtime.send(msg)
-
-    # Wait for processing
     await asyncio.sleep(2)
 
-    # Assert: orchestrator classified correctly, plan built, executor ran,
-    # reviewer passed, session completed
     assert orch.session_state.completed_tasks  # at least one task finished
 ```
 
@@ -643,8 +582,8 @@ async def test_full_task_execution_cycle():
 |----------|----------|-----------|
 | Executor LLM loop pattern | ReAct (tool-use loop) | Standard agent pattern; works with all LLM providers |
 | Tool definition format | OpenAI function-calling JSON | Universal — Anthropic, OpenAI, and DeepSeek all support it |
-| Reviewer: single call or loop? | Single call | Reviewer doesn't use tools — one adversarial check is sufficient |
-| Provider SDK | `openai` package for DeepSeek | DeepSeek API is OpenAI-compatible; no custom SDK needed |
+| Reviewer: single call or loop? | Single call | Already specified in Spec 004 §4.5 — no tools needed |
+| Provider SDK for DeepSeek | `openai` package | DeepSeek API is OpenAI-compatible; no custom SDK needed |
 | Agent registration | Factory pattern on runtime | Keeps runtime agnostic; agent types are pluggable |
 | CLI framework | Plain `asyncio` REPL (no click/typer) | Minimal dependencies; matches the harness's asyncio-native philosophy |
 | DeepSeek model name | `deepseek-chat` | DeepSeek V4 Pro's standard model ID |
