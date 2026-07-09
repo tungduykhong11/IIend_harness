@@ -1,0 +1,28 @@
+# llend/settings.toml — Global settings for the llend harness.  Spec 004 §13.1
+#
+# All values shown are the defaults.  Omit a section or key to accept the
+# default; settings are merged on top of OrchestratorConfig defaults.
+
+[orchestrator]
+# Model selection  §17
+classification_model = "claude-haiku-4-5-20251001"   # cheap & fast for classify
+summarization_model = "claude-haiku-4-5-20251001"     # cheap for TaskResultSummary
+synthesis_model = "claude-sonnet-5"                    # quality for final synthesis
+
+[execution]
+max_retries_mandatory = 5
+max_retries_strict = 3
+max_retries_suggested = 1
+task_timeout_default = 300       # seconds (5 min)
+review_timeout_default = 120     # seconds (2 min)
+allow_parallel = false           # v0: sequential only
+
+[responder]
+enabled = true                   # can disable Responder entirely
+tool_auto_approve_timeout_ms = 10000  # cheap threshold for auto-approval
+max_tool_requests_per_turn = 3   # warn if Responder exceeds this
+
+[session]
+output_dir = "output"            # relative to cwd, or absolute
+checkpoint_dir = "~/.llend/checkpoints"
+max_session_duration = 3600      # seconds (1 hour) — safety kill-switch
