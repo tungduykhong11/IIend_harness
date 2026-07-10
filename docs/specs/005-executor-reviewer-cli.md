@@ -180,6 +180,40 @@ def _build_tool_definitions(action_bindings: dict) -> list[dict]:
 
 > **Note:** `ActionBinding.input_schema` is populated by the Registry during `Skill.resolve()` (Spec 002 §6.1). For custom actions, it is derived from the handler method's docstring `INPUT:` block. For global actions, it comes from the tool bridge mapping. If neither source provides a schema, the parameters object is empty and the LLM will call the tool with no arguments.
 
+### 2.5.1 JSON Extraction from Mixed Text
+
+LLMs (especially DeepSeek) often output natural-language explanation followed
+by JSON blocks, or wrap JSON in markdown fences (`` ```json ``` ``).  A shared
+helper ``_find_json_objects()`` scans the entire response for ``{…}`` pairs
+(tracking brace depth) and returns all successfully parsed dicts:
+
+```python
+def _find_json_objects(text: str) -> list[dict[str, Any]]:
+    """Find all top-level JSON objects in *text*, handling mixed NL + JSON."""
+    results = []
+    depth = 0; start = None
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0: start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                segment = text[start:i+1]
+                try:
+                    obj = json.loads(segment)
+                    if isinstance(obj, dict): results.append(obj)
+                except json.JSONDecodeError: pass
+                start = None
+        if depth < 0: depth = 0; start = None  # unbalanced reset
+    return results
+```
+
+Both ``_extract_tool_calls`` and ``_parse_output`` use this helper:
+- **Tool calls:** Any JSON object with ``"name"`` matching a known tool is a tool call.
+- **Final output:** Any JSON object with ``"output"`` key is the final answer.
+- **Fallback:** If neither pattern matches, try parsing the whole text as JSON.
+
 ### 2.6 Error Handling
 
 The Executor distinguishes error types at the ReAct loop level using a custom
