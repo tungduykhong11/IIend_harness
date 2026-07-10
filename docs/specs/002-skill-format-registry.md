@@ -802,6 +802,14 @@ plan = pipeline.build_plan(
 
 Orchestrator then simply iterates `plan.skills` in order, dispatching each as `task.dispatch`.
 
+> **Param forwarding:** User-supplied params are forwarded to **every** skill
+> in the plan, not just the terminal one.  For example, when the user asks
+> "Phân tích giá iPhone 15 trên eBay", the LLM extracts params like
+> ``{query: "iPhone 15", platform: "ebay", target_item: "iPhone 15"}``.
+> Both ``data_provider`` (needs ``query``) and ``analyze_pricing`` (needs
+> ``target_item``) receive the full params dict — each Executor extracts
+> what it needs.
+
 ### 7.4 Circular Dependency Detection
 
 Pipeline must detect circular deps (A → B → A) and fail at plan-build time, not at runtime:

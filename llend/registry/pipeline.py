@@ -178,8 +178,11 @@ class SkillPipeline:
             deps = getattr(skill, "dependencies", [])
             output_as = name
 
-            # Merge params: user-provided params + upstream outputs
-            merged_params: dict[str, Any] = dict(params) if name == skill_name else {}
+            # Merge params: forward all user params to every skill in the chain.
+            # Each Executor extracts what it needs from task_spec.  Upstream
+            # skills often need params too (e.g. data_provider needs "query"
+            # from the user request, even though analyze_pricing is the terminal).
+            merged_params: dict[str, Any] = dict(params)
 
             if deps:
                 for dep in deps:
