@@ -26,7 +26,7 @@ stealth_mode = true
 user_agent = "llend-harness/0.1"
 
 [actions.parse_listing_html]
-tool = "llend_harness.parsers"
+tool = "llend.parsers"
 function = "parse_product_listing"
 timeout_ms = 5000
 
