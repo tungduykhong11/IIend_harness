@@ -113,32 +113,57 @@ def parse_product_listing(
 
 def _find_listing_containers(soup: BeautifulSoup) -> list[Any]:
     """Find individual listing elements on the page."""
-    # Try common listing container selectors
+    # Try common listing container selectors (most specific first)
     container_selectors = [
-        "li.s-item",               # eBay search results
-        "[data-component-type='s-search-result']",  # Amazon
-        "div.s-result-item",       # Amazon
-        "article.product",         # generic
-        ".listing-item",           # generic
-        "li[data-listing-id]",     # generic data attribute
+        "li.s-item",                              # eBay search results
+        ".srp-results li.s-item",                 # eBay (more specific)
+        "div[data-viewport]" "[data-view] li",    # eBay modern layout
+        "[data-component-type='s-search-result']", # Amazon
+        "div.s-result-item",                      # Amazon
+        "article.product",                        # generic
+        ".listing-item",                          # generic
+        "li[data-listing-id]",                    # generic
+        "div[class*='listing']",                  # generic class pattern
+        "li[class*='item']",                      # generic class pattern
     ]
     for selector in container_selectors:
-        items = soup.select(selector)
-        if items:
-            return items
+        try:
+            items = soup.select(selector)
+            if len(items) >= 1:
+                return items
+        except Exception:
+            continue
 
-    # Fallback: find repeating patterns (elements with same class,
-    # children of main content area)
-    main = soup.select_one("main, #main, .main, #content, .content")
+    # Fallback: find repeating <li> patterns in main content
+    main = soup.select_one(
+        "main, #main, .main, #content, .content, "
+        "div[role='main'], .srp-results, #srp-river-results"
+    )
     if main is None:
         main = soup
 
     # Look for ul > li patterns (most common listing format)
-    ul = main.select_one("ul.srp-results, ul.listings, ul[class*='result']")
-    if ul is not None:
-        items = ul.select("li")
-        if len(items) >= 3:
-            return items
+    for ul_selector in [
+        "ul.srp-results", "ul.listings", "ul[class*='result']",
+        "ul[class*='list']", "div[class*='result'] ul",
+    ]:
+        ul = main.select_one(ul_selector)
+        if ul is not None:
+            items = ul.select("li")
+            if len(items) >= 2:
+                return items
+
+    # Last resort: any <li> elements with links inside (likely listings)
+    li_items = main.select("li a[href]")
+    if len(li_items) >= 3:
+        # Return parent <li> elements
+        parents = set()
+        for a in li_items:
+            parent_li = a.find_parent("li")
+            if parent_li is not None:
+                parents.add(parent_li)
+        if len(parents) >= 2:
+            return list(parents)
 
     return []
 
