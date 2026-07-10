@@ -206,10 +206,11 @@ class ExecutorAgent:
             if isinstance(raw, dict):
                 action_bindings[name] = ActionBinding(**raw)
         handler = self._skill_context.get("handler")
-        logger.info(
-            "Executor %s: handler=%s, custom_actions=%s",
+        logger.warning(
+            "EXECUTOR %s: handler=%s, skill=%s, custom_actions=%s",
             self._instance_id,
             type(handler).__name__ if handler else "NONE",
+            self._skill_name,
             [n for n, b in action_bindings.items() if b.source == "custom"],
         )
         self._action_dispatcher = ActionDispatcher(action_bindings, handler=handler)
