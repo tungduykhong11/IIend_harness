@@ -381,33 +381,27 @@ class ExecutorAgent:
         response_text: str,
         tools: list[dict[str, Any]],
     ) -> list[dict[str, Any]]:
-        """Determine whether the LLM response is a tool call or final answer.
+        """Determine whether the LLM response contains tool calls.
 
-        In non-streaming mode, we parse the response text.  If the text
-        contains a JSON function_call block, we treat it as a tool call.
-        Otherwise, it's the final answer.
+        LLMs (especially DeepSeek) often output natural-language explanation
+        followed by one or more JSON tool-call blocks.  We scan the entire
+        response for JSON objects — any block matching a known tool name is
+        treated as a tool call.  If none are found, the response is the
+        final answer.
         """
-        text = response_text.strip()
+        tool_names = {t["function"]["name"] for t in tools}
+        tool_calls: list[dict[str, Any]] = []
 
-        # Check for explicit function_call marker
-        if text.startswith("{"):
-            try:
-                parsed = _json.loads(text)
-                # If it looks like a tool call (has "name" and "arguments" keys
-                # and matches one of our tool names), treat as tool call
-                if "name" in parsed and "arguments" in parsed:
-                    tool_names = {t["function"]["name"] for t in tools}
-                    if parsed["name"] in tool_names:
-                        return [{
-                            "name": parsed["name"],
-                            "id": parsed.get("id", ""),
-                            "arguments": parsed["arguments"],
-                        }]
-            except (_json.JSONDecodeError, TypeError):
-                pass
+        for obj in _find_json_objects(response_text):
+            if "name" in obj and "arguments" in obj:
+                if obj["name"] in tool_names:
+                    tool_calls.append({
+                        "name": obj["name"],
+                        "id": obj.get("id", ""),
+                        "arguments": obj["arguments"],
+                    })
 
-        # Not a tool call — this is the final answer
-        return []
+        return tool_calls
 
     # ------------------------------------------------------------------
     # Output parsing  §2.4
@@ -501,3 +495,45 @@ class ExecutorAgent:
         logger.info(
             "Executor %s: agent.error sent code=%s", self._instance_id, code.value,
         )
+
+
+# ---------------------------------------------------------------------------
+# JSON extraction helper  (module-level)
+# ---------------------------------------------------------------------------
+
+
+def _find_json_objects(text: str) -> list[dict[str, Any]]:
+    """Find all top-level JSON objects in *text*, handling mixed NL + JSON.
+
+    LLMs often output natural-language text followed by one or more JSON
+    blocks.  This function scans for ``{...}`` pairs (tracking brace depth)
+    and returns every successfully parsed dict.
+
+    Used by ``ExecutorAgent._extract_tool_calls()`` to find tool-call
+    blocks embedded anywhere in the LLM response.
+    """
+    results: list[dict[str, Any]] = []
+    depth = 0
+    start: int | None = None
+
+    for i, ch in enumerate(text):
+        if ch == "{":
+            if depth == 0:
+                start = i
+            depth += 1
+        elif ch == "}":
+            depth -= 1
+            if depth == 0 and start is not None:
+                segment = text[start : i + 1]
+                try:
+                    obj = _json.loads(segment)
+                    if isinstance(obj, dict):
+                        results.append(obj)
+                except (_json.JSONDecodeError, TypeError):
+                    pass
+                start = None
+        if depth < 0:  # unbalanced braces — reset
+            depth = 0
+            start = None
+
+    return results
