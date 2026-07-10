@@ -518,9 +518,50 @@ class ToolBridge:
     def validate_mapping(self, action_name: str) -> bool:
         """Check the mapped tool is importable and the function exists.
         Tries: importlib.import_module(tool) → getattr(module, function).
-        Returns True if importable, False otherwise."""
+        Returns True if importable, False otherwise.
+
+        On success, **auto-populates** ``ActionBinding.input_schema`` by
+        introspecting the function signature (§5.4).  This lets the Executor
+        build proper LLM tool definitions with parameter names, types, and
+        required fields — no manual TOML configuration needed.
+        """
         ...
 ```
+
+### 5.4 Auto `input_schema` from Function Signature
+
+The ToolBridge automatically generates an ``input_schema`` for each action
+by inspecting the target function's signature.  This avoids manual JSON
+Schema maintenance in ``mappings.toml``.
+
+```python
+def _signature_to_schema(func: object) -> dict[str, Any]:
+    """Auto-generate JSON Schema from function signature.
+
+    - Maps Python types → JSON Schema types (str→string, int→integer, …)
+    - Skips ``self``/``cls`` parameters
+    - Uses ``inspect.Parameter.default`` for optional fields
+    - Parameters without defaults are added to ``required``
+    """
+```
+
+**Example:** Function ``fetch_web_page(url: str, stealth_mode: bool = True)``
+generates:
+
+```json
+{
+  "type": "object",
+  "properties": {
+    "url": {"type": "string", "description": "url"},
+    "stealth_mode": {"type": "boolean", "description": "stealth_mode", "default": true}
+  },
+  "required": ["url"]
+}
+```
+
+> **Note:** ``**kwargs`` and ``*args`` are ignored.  Functions like
+> ``DataFrame.to_csv`` (instance methods) need a plain-function wrapper
+> — see ``llend/parsers/csv_exporter.py`` for an example.
 
 ### 5.3 Why TOML + Python (not just TOML)
 
@@ -858,9 +899,17 @@ Spec 001 defines `task.dispatch` with payload `{task_id, skill_name, task_spec, 
                 "required": ["market_summary", "outliers", "price_segments", "recommendation"],
             },
             "enforcement": "strict",
+            "handler": <AnalyzePricingSkill instance>,  // custom handler (in-process ref)
         },
     },
 }
+```
+
+> **Note on `handler`:** Custom skill handlers (``handler.py``) are passed
+> as a direct Python object reference in the dispatch payload.  Since the
+> harness runs in-process, no serialization is needed.  The Executor passes
+> the handler to ``ActionDispatcher``, which calls custom action methods on
+> it.  Without the handler, custom actions fail with "no handler instance".
 ```
 
 ### 9.2 task.result Validation
