@@ -413,20 +413,23 @@ class ExecutorAgent:
         Returns ``{status, output, concerns, parsed_ok}``.  When
         ``parsed_ok`` is False, the caller must send ``agent.error``
         with ``VALIDATION_ERROR`` per §2.6.
+
+        Uses ``_find_json_objects`` to locate JSON anywhere in the
+        response — handles markdown fences (`` ```json ``` ``) and
+        natural-language text mixed with JSON blocks.
         """
-        text = text.strip()
+        for obj in _find_json_objects(text):
+            if isinstance(obj, dict) and "output" in obj:
+                return {
+                    "status": obj.get("status", "done"),
+                    "output": obj["output"],
+                    "concerns": obj.get("concerns", []),
+                    "parsed_ok": True,
+                }
 
-        # Strip markdown code fences if present
-        if text.startswith("```"):
-            lines = text.split("\n")
-            if lines[0].startswith("```"):
-                lines = lines[1:]
-            if lines and lines[-1].strip() == "```":
-                lines = lines[:-1]
-            text = "\n".join(lines).strip()
-
+        # Also try parsing the whole text as pure JSON (no fences)
         try:
-            parsed = _json.loads(text)
+            parsed = _json.loads(text.strip())
             if isinstance(parsed, dict) and "output" in parsed:
                 return {
                     "status": parsed.get("status", "done"),
