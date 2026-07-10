@@ -131,7 +131,9 @@ function = "nonexistent_function"
             bridge = ToolBridge(path, validate=False)
             assert bridge.validate_mapping("wrong_func") is False
 
-    def test_validation_raises_on_unimportable_tool(self):
+    def test_validation_logs_warning_on_unimportable_tool(self):
+        """Unimportable tools log a warning instead of crashing — the harness
+        can still start and run skills that don't depend on the missing tool."""
         toml = """
 [actions.bad]
 tool = "nonexistent_xyz"
@@ -139,8 +141,11 @@ function = "foo"
 """
         with tempfile.TemporaryDirectory() as tmp:
             path = _write_toml(toml, Path(tmp))
-            with pytest.raises(ValueError, match="unimportable tools"):
-                ToolBridge(path, validate=True)
+            bridge = ToolBridge(path, validate=True)  # no longer raises ValueError
+            # The binding is still registered (validation is advisory);
+            # skills that depend on it will fail at runtime.
+            assert "bad" in bridge.list_actions()
+            assert bridge.validate_mapping("bad") is False
 
     def test_empty_actions(self):
         toml = ""

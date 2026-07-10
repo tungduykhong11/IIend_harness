@@ -98,6 +98,39 @@ class OrchestratorConfig(BaseModel):
         description="Safety kill-switch — seconds before session auto-terminates.  §13.1.",
     )
 
+    # -- LLM provider  Spec 005 §7.2 [llm] ---------------------------------
+
+    llm_provider: str = Field(
+        default="deepseek",
+        description="LLM provider: 'anthropic' | 'deepseek' | 'openai'.  §7.2.",
+    )
+    llm_api_key_env: str = Field(
+        default="DEEPSEEK_API_KEY",
+        description="Env var name for the API key.  §7.2.",
+    )
+    llm_base_url: str = Field(
+        default="https://api.deepseek.com",
+        description="Override for custom endpoints.  §7.2.",
+    )
+
+    # -- Executor  Spec 005 §7.2 [executor] ---------------------------------
+
+    executor_model: str = Field(
+        default="deepseek-chat",
+        description="Model for Executor LLM calls.  §7.2.",
+    )
+    executor_max_tool_calls: int = Field(
+        default=20,
+        description="Safety limit on ReAct loop iterations.  §7.2.",
+    )
+
+    # -- Reviewer  Spec 005 §7.2 [reviewer] ---------------------------------
+
+    reviewer_model: str = Field(
+        default="deepseek-chat",
+        description="Model for Reviewer LLM calls.  §7.2.",
+    )
+
     # ------------------------------------------------------------------
     # helpers
     # ------------------------------------------------------------------
@@ -137,11 +170,25 @@ class OrchestratorConfig(BaseModel):
 
             if tomllib is not None:
                 raw = tomllib.loads(toml_path.read_text(encoding="utf-8"))
-                for section in ("orchestrator", "execution", "responder", "session"):
+                # Section → field prefix mapping.
+                # Spec 005 sections use a naming convention where TOML keys
+                # under [llm]/[executor]/[reviewer] are prefixed with the
+                # section name in the pydantic model.  Existing Spec 004
+                # sections (orchestrator, execution, responder, session)
+                # have keys that already match config field names.
+                section_prefixes: dict[str, str] = {
+                    "llm": "llm_",
+                    "executor": "executor_",
+                    "reviewer": "reviewer_",
+                }
+                for section in ("orchestrator", "execution", "responder", "session", "llm", "executor", "reviewer"):
                     if section in raw and isinstance(raw[section], dict):
+                        prefix = section_prefixes.get(section, "")
                         for key, value in raw[section].items():
-                            # TOML uses hyphens; pydantic uses underscores
-                            kwargs[key.replace("-", "_")] = value
+                            flat_key = key.replace("-", "_")
+                            if prefix and not flat_key.startswith(prefix):
+                                flat_key = prefix + flat_key
+                            kwargs[flat_key] = value
 
         return cls(**kwargs)
 

@@ -77,7 +77,7 @@ Orchestrator is the **only agent that spawns other agents**. It does NOT call to
 
 ### 3.1 The Classification Problem
 
-When a human message arrives, the Orchestrator must decide: is this a task to execute, or a question to answer?
+When a `user.message` arrives (Spec 001 §2.2), the Orchestrator must decide: is this a task to execute, or a question to answer?
 
 | Human says | Classification | Action |
 |------------|---------------|--------|
@@ -129,12 +129,16 @@ Respond with JSON: {"category": "...", "confidence": 0.0-1.0, "reasoning": "..."
 
 ### 3.4 Routing Table
 
-| Category | Route To | Message Type |
-|----------|----------|-------------|
-| `task` | SkillPipeline → Executor loop | `task.dispatch` |
-| `conversational` | Responder | `respond.query` |
-| `session_end` | Session completion flow | `session.complete` |
-| `control` | Orchestrator internal handler | (cancel/pause/status) |
+Incoming message type: `user.message` (Spec 001 §2.2).
+
+| Category | Route To | Outgoing Message | Response Handling |
+|----------|----------|-----------------|-------------------|
+| `task` | SkillPipeline → Executor loop | `task.dispatch` | Progress events + signal `wait_for_response()` |
+| `conversational` | Responder | `respond.query` | `RESPOND_REPLY` chunks streamed to progress channel; final chunk signals `wait_for_response()` |
+| `session_end` | Session completion flow | `session.complete` | — |
+| `control` | Orchestrator internal handler | (cancel/pause/status) | — |
+
+> **Note on `RESPOND_REPLY` handling:** Streaming chunks (`chunk_content`) are forwarded to the progress channel for real-time display. The final chunk (`done=True` or `final_answer` present) signals `wait_for_response()` so the CLI unblocks and shows the next prompt. Intermediate chunks do NOT signal — only the final answer completes the response cycle.
 
 ---
 
@@ -194,10 +198,12 @@ Step 5: Validate output schema
       → Send to Reviewer for quality check
 
 Step 6-8: Reviewer Cycle
+  → Build adversarial system_prompt from template (§4.5), filling in:
+      {task_spec}, {output_schema}, {enforcement}, {executor_output}, {concerns}
   → Spawn Reviewer (fresh context)
   → Message(msg_type=TASK_REVIEW, payload={
-        task_id, original_task_spec, executor_output,
-        concerns_from_executor?, schema_validation_issues?
+        task_id, task_spec, executor_output, system_prompt,
+        concerns?, schema_validation_issues?
     })
   → Wait for task.verdict
   → ReviewIssue model (Spec 001 §2.2.1): severity, field, message

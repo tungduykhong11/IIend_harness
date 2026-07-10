@@ -36,6 +36,7 @@ class MsgType(StrEnum):
     INTERRUPT_RESPONSE = "interrupt.response" # Orch → Agent (§3.4)
     SESSION_START = "session.start"          # Runtime → Orch
     SESSION_COMPLETE = "session.complete"    # Orch → Runtime
+    USER_MESSAGE = "user.message"            # Human → Orch  (§2.2 — Spec 005 fix)
     AGENT_ERROR = "agent.error"              # Any → Orch  (§2.3, §3.4)
     AGENT_HEARTBEAT = "agent.heartbeat"      # Any → Orch  (§3.5, idle > 30s)
 

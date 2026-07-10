@@ -199,6 +199,10 @@ class OrchestratorAgent:
         self._active_reviewers: dict[str, str] = {}  # task_id → instance_id
         self._retry_counts: dict[str, int] = {}  # task_id → retry count
 
+        # Response feedback to CLI  (CLI response loop fix)
+        self._response_ready: asyncio.Event | None = None
+        self._last_response: str = ""
+
     # ------------------------------------------------------------------
     # properties
     # ------------------------------------------------------------------
@@ -209,6 +213,27 @@ class OrchestratorAgent:
 
     @property
     def session_state(self) -> SessionState:
+        return self._session_mgr.state
+
+    # ------------------------------------------------------------------
+    # response feedback  (CLI response loop fix)
+    # ------------------------------------------------------------------
+
+    async def wait_for_response(self, timeout: float = 300.0) -> str:
+        """Block until the next response is ready. Returns the response text.
+
+        Called by the CLI REPL after sending a ``user.message``.  The event
+        is signalled by ``_process_message`` when a ``RESPOND_REPLY`` arrives
+        or when a task plan completes.
+        """
+        self._response_ready = asyncio.Event()
+        try:
+            await asyncio.wait_for(self._response_ready.wait(), timeout=timeout)
+            return self._last_response
+        except asyncio.TimeoutError:
+            return ""
+        finally:
+            self._response_ready = None
         return self._session_mgr.state
 
     # ------------------------------------------------------------------
@@ -359,7 +384,14 @@ class OrchestratorAgent:
         msg_type = msg.msg_type
 
         if msg_type == MsgType.SESSION_START:
-            # Human-initiated request — classify and route
+            # Session initiation — record session goal
+            goal = msg.payload.get("goal") or msg.payload.get("session_goal") or msg.payload.get("text", "")
+            if goal:
+                self._session_mgr.state.session_goal = goal
+            logger.info("Session started: %s", goal[:80] if goal else "(no goal)")
+
+        elif msg_type == MsgType.USER_MESSAGE:
+            # Human message during session — classify and route  §3
             await self._handle_human_message(msg)
 
         elif msg_type == MsgType.TASK_RESULT:
@@ -379,12 +411,25 @@ class OrchestratorAgent:
         elif msg_type == MsgType.AGENT_ERROR:
             await self._handle_agent_error(msg)
 
+        elif msg_type == MsgType.RESPOND_REPLY:
+            # Responder's answer — forward to progress channel + signal waiting CLI.
+            # Handles both streaming chunks (§8.1) and non-streaming replies (§8.2).
+            done = msg.payload.get("done", False)
+            is_final = done or "final_answer" in msg.payload
+
+            if is_final:
+                answer = msg.payload.get("final_answer", msg.payload.get("answer", ""))
+                if answer:
+                    await self._progress.emit(ProgressEvent(level="info", message=answer))
+                self._session_mgr.state.add_conversation_turn("responder", answer)
+                self._last_response = answer
+                if self._response_ready is not None:
+                    self._response_ready.set()
+            # Streaming chunks are accumulated silently — only the final
+            # answer is emitted to the progress channel.
+
         elif msg_type == MsgType.AGENT_HEARTBEAT:
             logger.debug("heartbeat from %s", msg.sender_instance)
-
-        elif msg_type == MsgType.RESPOND_QUERY:
-            # Human message already classified as conversational
-            pass  # handled in _handle_human_message
 
         else:
             logger.debug("orchestrator ignoring msg_type=%s", msg_type.value)
@@ -464,6 +509,13 @@ class OrchestratorAgent:
             await self._execute_plan_parallel(plan)
         else:
             await self._execute_plan_sequential(plan)
+
+        # Signal waiting CLI that a response is ready
+        completed = self._session_mgr.state.completed_tasks
+        if completed:
+            self._last_response = completed[-1].summary
+        if self._response_ready is not None:
+            self._response_ready.set()
 
     async def _execute_plan_sequential(self, plan: ExecutionPlan) -> None:
         """Execute tasks one-by-one in order.  §5.3."""
@@ -597,7 +649,7 @@ class OrchestratorAgent:
             )
             self._active_executors[str(task_id)] = executor_id
 
-            # Send task.dispatch  §4.2 step 3
+            # Send task.dispatch  §4.2 step 3 — includes skill_context §2.2 (Spec 005 fix)
             dispatch_msg = Message(
                 session_id=self._session_id or uuid4(),
                 sender=AgentType.ORCHESTRATOR.value,
@@ -609,6 +661,16 @@ class OrchestratorAgent:
                     "task_id": str(task_id),
                     "skill_name": task_spec.skill_name,
                     "task_spec": task_spec.task_spec,
+                    "skill_context": {
+                        "skill_md": skill.skill_md,
+                        "allowed_actions": list(skill.action_bindings.keys()),
+                        "action_bindings": {
+                            name: binding.model_dump()
+                            for name, binding in skill.action_bindings.items()
+                        },
+                        "output_schema": skill.output_schema,
+                        "enforcement": skill.enforcement,
+                    },
                 },
             )
             await self._runtime.send(dispatch_msg)
@@ -667,11 +729,11 @@ class OrchestratorAgent:
                 msg_type=MsgType.TASK_REVIEW,
                 payload={
                     "task_id": str(task_id),
-                    "original_task_spec": task_spec.task_spec,
+                    "task_spec": task_spec.task_spec,
                     "executor_output": output,
-                    "concerns_from_executor": concerns,
-                    "schema_validation_issues": schema_issues,
                     "system_prompt": reviewer_prompt,
+                    "concerns": concerns,
+                    "schema_validation_issues": schema_issues,
                 },
             )
             await self._runtime.send(review_msg)
@@ -896,7 +958,7 @@ class OrchestratorAgent:
         await self._runtime.interrupt(msg.sender_instance, prompt, options)
 
     @staticmethod
-    def _is_trivial_decision(self, payload: dict[str, Any]) -> bool:
+    def _is_trivial_decision(payload: dict[str, Any]) -> bool:
         """Check whether this interrupt can be auto-resolved.  §8.2."""
         prompt = payload.get("message", payload.get("prompt", ""))
         lower = prompt.lower()
@@ -997,6 +1059,21 @@ class OrchestratorAgent:
             context={"skill_name": skill_name, "tool_params": tool_params},
         )
 
+        # Resolve skill to build skill_context for the dispatch  §9.1
+        skill = self._registry.get(skill_name)
+        skill_context_payload: dict[str, Any] = {}
+        if skill is not None:
+            skill_context_payload = {
+                "skill_md": skill.skill_md,
+                "allowed_actions": list(skill.action_bindings.keys()),
+                "action_bindings": {
+                    name: binding.model_dump()
+                    for name, binding in skill.action_bindings.items()
+                },
+                "output_schema": skill.output_schema,
+                "enforcement": skill.enforcement,
+            }
+
         dispatch = Message(
             session_id=self._session_id or uuid4(),
             sender=AgentType.ORCHESTRATOR.value,
@@ -1008,6 +1085,7 @@ class OrchestratorAgent:
                 "task_id": str(task_id),
                 "skill_name": skill_name,
                 "task_spec": tool_params,
+                "skill_context": skill_context_payload,
             },
         )
         await self._runtime.send(dispatch)

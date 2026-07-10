@@ -525,7 +525,7 @@ class ToolBridge:
 ### 5.3 Why TOML + Python (not just TOML)
 
 TOML for static mappings (human-editable). Python `ToolBridge` class wraps it with:
-- Import validation at startup (fail fast if `crawl4ai` is not installed)
+- Import validation at startup — **logs warnings** for unimportable tools rather than crashing. The harness can still start and run skills that don't depend on missing tools. Skills depending on unavailable tools will fail at runtime with clear error messages.
 - Config merging (TOML base + env var overrides + per-skill overrides)
 - Hot-reload: watcher on `mappings.toml` re-validates without restart
 
@@ -653,6 +653,7 @@ class ActionBinding(BaseModel):
     timeout_ms: int = 30000
     retry: int = 0
     config: dict[str, Any] = {}
+    input_schema: dict[str, Any] | None = None  # JSON Schema for LLM function-calling (Spec 005 §2.5)
 
 class Skill(SkillMeta):
     """Fully resolved skill, ready for dispatch."""

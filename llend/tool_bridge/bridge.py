@@ -36,10 +36,11 @@ class ToolBridge:
     def __init__(self, mappings_path: Path, *, validate: bool = True) -> None:
         """Load and optionally validate all action bindings from *mappings_path*.
 
-        When *validate* is ``True`` (default), raises ``ValueError`` immediately
-        if a configured tool cannot be imported (fail-fast — §5.3).  Pass
-        ``validate=False`` for development or when tools are added incrementally;
-        call ``validate_mapping()`` individually later.
+        When *validate* is ``True`` (default), logs warnings for unimportable
+        tools but does **not** crash — the harness can still start and run
+        skills that don't depend on the missing tools.  Pass ``validate=False``
+        to skip validation entirely; call ``validate_mapping()`` individually
+        later.
         """
         self._mappings_path = mappings_path
         self._bindings: dict[str, ActionBinding] = {}
@@ -85,8 +86,11 @@ class ToolBridge:
 
         try:
             mod = importlib.import_module(binding.tool)
-        except ImportError:
-            logger.warning("Tool %r for action %r is not installed", binding.tool, action_name)
+        except Exception:
+            logger.warning(
+                "Tool %r for action %r could not be imported",
+                binding.tool, action_name, exc_info=True,
+            )
             return False
 
         # Walk dotted function path (e.g. "AsyncWebCrawler.arun")
@@ -248,7 +252,12 @@ class ToolBridge:
             target[action_name] = binding
 
     def _validate_all(self) -> None:
-        """Run ``validate_mapping()`` on every binding at startup.  §5.2."""
+        """Run ``validate_mapping()`` on every binding at startup.  §5.2.
+
+        Missing tools are logged as warnings rather than crashing startup —
+        the harness can still run skills that don't depend on the unavailable
+        tools.
+        """
         failed: list[str] = []
         for action_name in self._bindings:
             if not self.validate_mapping(action_name):
@@ -256,8 +265,10 @@ class ToolBridge:
 
         if failed:
             names = ", ".join(failed)
-            raise ValueError(
-                f"ToolBridge startup: {len(failed)} action(s) have unimportable tools: {names}"
+            logger.warning(
+                "ToolBridge: %d action(s) have unimportable tools: %s. "
+                "Skills depending on these actions will fail at runtime.",
+                len(failed), names,
             )
 
         logger.info(

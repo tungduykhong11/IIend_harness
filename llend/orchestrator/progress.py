@@ -13,6 +13,7 @@ Spec references
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import Awaitable, Callable
 from typing import Literal
@@ -73,7 +74,10 @@ class ProgressReporter:
             event.message,
         )
         if self._on_event is not None:
-            await self._on_event(event)
+            result = self._on_event(event)
+            # Support both sync callbacks (return None) and async callbacks
+            if asyncio.iscoroutine(result):
+                await result
 
     # -- Convenience emitters -----------------------------------------------
 

@@ -85,6 +85,7 @@ class ActionBinding(BaseModel):
     timeout_ms: int = 30000
     retry: int = 0
     config: dict[str, Any] = Field(default_factory=dict)
+    input_schema: dict[str, Any] | None = None  # JSON Schema for LLM function-calling (Spec 005 §2.5)
 
 
 # ---------------------------------------------------------------------------

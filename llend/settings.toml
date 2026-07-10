@@ -26,3 +26,17 @@ max_tool_requests_per_turn = 3   # warn if Responder exceeds this
 output_dir = "output"            # relative to cwd, or absolute
 checkpoint_dir = "~/.llend/checkpoints"
 max_session_duration = 3600      # seconds (1 hour) — safety kill-switch
+
+# -- Spec 005 §7.1 -------------------------------------------------------
+
+[llm]
+provider = "deepseek"             # "deepseek" | "anthropic" | "openai"
+api_key_env = "DEEPSEEK_API_KEY"  # env var name for the API key
+base_url = "https://api.deepseek.com"  # override for custom endpoints
+
+[executor]
+model = "deepseek-chat"           # model for Executor LLM calls
+max_tool_calls_per_task = 20      # safety limit on ReAct loop iterations
+
+[reviewer]
+model = "deepseek-chat"           # model for Reviewer LLM calls

@@ -54,11 +54,12 @@ class Message(BaseModel):
 |----------|-----------|---------|---------|
 | `task.dispatch` | Orch → Executor | `{task_id, skill_name, task_spec, skill_context}` | Assign 1 task to a fresh Executor. `skill_context` contains skill definition, allowed actions, action bindings, and output schema — see Spec 002 §9. |
 | `task.result` | Executor → Orch | `{task_id, status: TaskStatus, output, concerns?: str[]}` | Executor's final output. `status` uses `TaskStatus` enum. `concerns` is Executor's own doubts (optional). Output validated against skill's output schema if present (Spec 002 §9.2). |
-| `task.review` | Orch → Reviewer | `{task_id, task_spec, executor_output, review_criteria?}` | Ask Reviewer to verify. Reviewer checks: (a) output matches output schema (Spec 002), (b) output fulfills `task_spec` intent, (c) no hallucinations, factual errors, or missing data. Optional `review_criteria` can override default checks. |
+| `task.review` | Orch → Reviewer | `{task_id, task_spec, executor_output, system_prompt, concerns?, schema_validation_issues?}` | Ask Reviewer to verify. `system_prompt` is the fully rendered adversarial review prompt (built by Orchestrator from template in Spec 004 §4.5). `concerns` are Executor's own doubts from `task.result` (if any). `schema_validation_issues` are from Orchestrator's output schema validation step (if any). Reviewer performs a single LLM call with this prompt and returns a verdict. |
 | `task.verdict` | Reviewer → Orch | `{task_id, verdict: Verdict, issues: ReviewIssue[], confidence: float}` | `verdict` uses `Verdict` enum. `issues` is a list of `ReviewIssue` objects. `confidence` is 0.0–1.0. |
 | `interrupt.raise` | Any → Orch | `{message, options: str[], context: {task_id, current_step, relevant_summary?}}` | Agent needs human judgment. `context` carries enough info for human to decide without reading full history. |
 | `interrupt.response` | Orch → Agent | `{decision, human_note?}` | Human's answer fed back |
 | `session.start` | Runtime → Orch | `{goal, params}` | New session initiated |
+| `user.message` | Human → Orch | `{text: str}` | General user input during a session. Orchestrator classifies and routes per Spec 004 §3. Sent by CLI, Web UI, or any human-facing channel. |
 | `session.complete` | Orch → Runtime | `{summary: str, artifacts: Artifact[]}` | Final result. `Artifact = {name, path, type, description?}` — file paths relative to session output dir. |
 | `agent.error` | Any → Orch | `{error_code: AgentErrorCode, detail: str, recoverable: bool}` | Agent crashed / timed out / validation failed. See `AgentErrorCode` enum. |
 | `agent.heartbeat` | Any → Orch | `{}` | Still alive (if idle > 30s) |
@@ -78,6 +79,7 @@ class MsgType(StrEnum):
     INTERRUPT_RESPONSE = "interrupt.response"
     SESSION_START = "session.start"
     SESSION_COMPLETE = "session.complete"
+    USER_MESSAGE = "user.message"                    # Spec 004 §3 (classification)
     AGENT_ERROR = "agent.error"
     AGENT_HEARTBEAT = "agent.heartbeat"
     RESPOND_QUERY = "respond.query"              # Spec 003
@@ -144,15 +146,18 @@ This applies to ALL message types. For `interrupt.raise`, the interrupt checkpoi
 **Orchestrator is the hub.** All messages route through Orchestrator. No Executor talks directly to Reviewer. No peer-to-peer.
 
 ```
-Executor ──→ Orchestrator ──→ Reviewer
-                │
-                ├──→ Responder          ← Spec 003
-                │       │
-                │       └──→ respond.request_tool → Orchestrator → Executor
-                │
-                ├──→ Interrupt (human)
-                │
-                └──→ Executor (re-spawn on review fail)
+Human ────→ Orchestrator ──→ Reviewer
+ (user.message)  │
+                 │
+ Executor ───────┤
+                 │
+                 ├──→ Responder          ← Spec 003
+                 │       │
+                 │       └──→ respond.request_tool → Orchestrator → Executor
+                 │
+                 ├──→ Interrupt (human)
+                 │
+                 └──→ Executor (re-spawn on review fail)
 ```
 
 This is simpler than a full mesh and makes every decision traceable. It also means the Orchestrator always knows the full state of every in-flight task and conversation.

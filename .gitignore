@@ -14,6 +14,9 @@ venv/
 # Checkpoints (interrupt saves)
 /.llend/
 
+# Secrets
+.env
+
 # OS
 .DS_Store
 Thumbs.db

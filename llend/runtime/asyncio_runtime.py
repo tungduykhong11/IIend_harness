@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
@@ -122,6 +123,9 @@ class AsyncioRuntime(AgentRuntime):
         self._ttl_check_interval = ttl_check_interval
         self._closed = False
 
+        # Agent factory registry  §5.2 (Spec 005)
+        self._agent_factories: dict[str, Callable[..., Any]] = {}
+
         # Active interrupt checkpoints keyed by instance_id (§3.4)
         self._checkpoints: dict[str, Checkpoint] = {}
 
@@ -161,8 +165,31 @@ class AsyncioRuntime(AgentRuntime):
         # §3.4: Ensure TTL monitor is running
         self._ensure_ttl_monitor()
 
+        # §5.2 (Spec 005): If a factory is registered for this agent type,
+        # launch the agent's processing loop as a background task.
+        if agent_type in self._agent_factories:
+            handle.main_task = asyncio.create_task(
+                self._agent_factories[agent_type](handle, context),
+                name=f"agent-{instance_id}",
+            )
+
         logger.info("spawned agent instance_id=%s type=%s", instance_id, agent_type)
         return instance_id
+
+    def register_agent_type(self, agent_type: str, factory: Callable[..., Any]) -> None:
+        """Register a factory that creates an agent's processing task.  Spec 005 §5.2.
+
+        When ``spawn(agent_type, context)`` is called, the runtime creates the
+        agent handle (queue, lifecycle state, heartbeat) and then launches the
+        factory as a background ``asyncio.Task``::
+
+            factory(handle, context)
+
+        The factory receives the ``_AgentHandle`` (so it has access to the
+        inbox queue) and the spawn ``context`` dict.  It is expected to run
+        until the agent completes, errors, or is killed.
+        """
+        self._agent_factories[agent_type] = factory
 
     async def send(self, message: Message) -> None:
         """Route *message* to its recipient's inbox queue.  §3.2, §2.4.
