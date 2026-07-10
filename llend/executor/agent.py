@@ -206,6 +206,12 @@ class ExecutorAgent:
             if isinstance(raw, dict):
                 action_bindings[name] = ActionBinding(**raw)
         handler = self._skill_context.get("handler")
+        logger.info(
+            "Executor %s: handler=%s, custom_actions=%s",
+            self._instance_id,
+            type(handler).__name__ if handler else "NONE",
+            [n for n, b in action_bindings.items() if b.source == "custom"],
+        )
         self._action_dispatcher = ActionDispatcher(action_bindings, handler=handler)
 
         # Build system prompt  §2.3
