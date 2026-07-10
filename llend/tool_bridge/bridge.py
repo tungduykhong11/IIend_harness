@@ -107,6 +107,11 @@ class ToolBridge:
             )
             return False
 
+        # Auto-populate input_schema from function signature if not already set.
+        # This lets the Executor build proper tool definitions for the LLM.
+        if binding.input_schema is None:
+            binding.input_schema = _signature_to_schema(obj)
+
         return True
 
     # ------------------------------------------------------------------
@@ -285,15 +290,82 @@ class ToolBridge:
         """Check *tool* module is importable and *function* exists on it.  §5.3."""
         try:
             mod = importlib.import_module(tool)
-        except ImportError:
+        except Exception:
             return False
-        try:
-            obj = mod
-            for attr in function.split("."):
+        obj = mod
+        for attr in function.split("."):
+            try:
                 obj = getattr(obj, attr)
-            return True
-        except AttributeError:
-            return False
+            except AttributeError:
+                return False
+        return True
+
+
+# ---------------------------------------------------------------------------
+# signature → JSON Schema helper  (module-level)
+# ---------------------------------------------------------------------------
+
+
+def _signature_to_schema(func: object) -> dict[str, Any]:
+    """Auto-generate a JSON Schema ``input_schema`` from *func*'s signature.
+
+    Inspects parameter names, types, and defaults to produce a schema the
+    LLM can use when deciding to call this tool.  ``**kwargs`` is ignored.
+    """
+    import inspect
+
+    try:
+        sig = inspect.signature(func)
+    except (ValueError, TypeError):
+        return {"type": "object", "properties": {}}
+
+    type_map = {
+        str: "string",
+        int: "integer",
+        float: "number",
+        bool: "boolean",
+        list: "array",
+        dict: "object",
+    }
+
+    properties: dict[str, Any] = {}
+    required: list[str] = []
+
+    for name, param in sig.parameters.items():
+        if name in ("self", "cls"):
+            continue
+        if param.kind in (inspect.Parameter.VAR_KEYWORD, inspect.Parameter.VAR_POSITIONAL):
+            continue
+
+        annotation = param.annotation
+        if annotation is inspect.Parameter.empty:
+            json_type = "string"
+        else:
+            # Handle generic types like list[str], dict[str, Any], str | None
+            origin = getattr(annotation, "__origin__", None)
+            if origin is not None:
+                # It's a generic — use the origin type
+                json_type = type_map.get(origin, "string")
+            else:
+                json_type = type_map.get(annotation, "string")
+
+        prop: dict[str, Any] = {"type": json_type, "description": name}
+
+        if param.default is not inspect.Parameter.empty:
+            prop["default"] = param.default
+        else:
+            required.append(name)
+
+        properties[name] = prop
+
+    return {
+        "type": "object",
+        "properties": properties,
+        "required": required,
+    } if required else {
+        "type": "object",
+        "properties": properties,
+    }
 
     @staticmethod
     def _coerce_env_value(value: str) -> int | float | bool | str:

@@ -644,6 +644,7 @@ class OrchestratorAgent:
                         },
                         "output_schema": skill.output_schema,
                         "enforcement": skill.enforcement,
+                        "handler": skill.handler,  # custom handler instance (in-process)
                     },
                 },
             )

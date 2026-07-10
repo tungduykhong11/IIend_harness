@@ -198,7 +198,8 @@ class ExecutorAgent:
         for name, raw in bindings_raw.items():
             if isinstance(raw, dict):
                 action_bindings[name] = ActionBinding(**raw)
-        self._action_dispatcher = ActionDispatcher(action_bindings, handler=None)
+        handler = self._skill_context.get("handler")
+        self._action_dispatcher = ActionDispatcher(action_bindings, handler=handler)
 
         # Build system prompt  §2.3
         system_prompt = self._build_system_prompt()

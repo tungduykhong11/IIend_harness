@@ -1,31 +1,23 @@
-Since there were no tasks completed and no conversation history, here is the appropriate session summary:
+Based on the provided information, here is the session summary.
 
----
+**Session Summary**
 
-## Session Summary
+**1. Goal Achievement**
+The session goal was to conduct an "Interactive session." However, no interaction or productive work was performed during this session. The goal was not achieved due to the absence of completed tasks or conversation history.
 
-**Session Goal:** Interactive session
+**2. Key Findings**
+No findings were generated, as no data was analyzed, no questions were asked, and no tasks were initiated.
 
-**Status:** No meaningful work was accomplished.
+**3. Limitations & Skipped Tasks**
+- **Limitations:** The session was entirely inactive. There is no record of user input, system prompts, or any data processing.
+- **Skipped Tasks:** The following tasks were listed as "could not complete":
+    - `data_provider` (Could not provide or load data)
+    - `analyze_pricing` (Could not perform analysis due to lack of data)
 
-**1. Goal Assessment:**
-The session was initiated as an interactive session, but no tasks were completed, and no conversation took place. The goal was therefore not fulfilled.
+**4. Next Steps**
+To proceed, a user must initiate a new session or provide a specific request. Recommended starting points include:
+- Uploading or specifying a data source (pricing data, competitor analysis, etc.).
+- Defining a clear analytical goal (e.g., "Identify pricing outliers" or "Compare my prices to market average").
 
-**2. Key Findings:**
-No findings were generated due to the absence of any interaction or task execution.
-
-**3. Limitations / Skipped Tasks:**
-The following tasks were listed as "skipped" (could not be completed):
-- **data_provider** – Not attempted.
-- **analyze_pricing** – Not attempted.
-
-No reasoning was provided for why these tasks were skipped, but they were likely pre-listed and not actionable without prior context or input.
-
-**4. Next Steps:**
-To proceed productively, the user should:
-- Provide specific context, files, or requirements.
-- Clarify the objective for the skipped tasks (e.g., what data source is available for `data_provider`, and what pricing analysis is desired for `analyze_pricing`).
-- Restart a new session with clear directives.
-
-**5. Generated Artifacts:**
-No artifact files were created during this session.
+**5. Artifact Files Generated**
+No files were generated during this session.

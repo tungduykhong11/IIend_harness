@@ -27,12 +27,9 @@ function = "parse_product_listing"
 timeout_ms = 5000
 
 [actions.export_csv]
-tool = "pandas"
-function = "DataFrame.to_csv"
-
-[actions.export_csv.config]
-index = false
-encoding = "utf-8-sig"
+tool = "llend.parsers.csv_exporter"
+function = "export_csv"
+timeout_ms = 10000
 
 [actions.export_excel]
 tool = "openpyxl"
