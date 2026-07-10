@@ -52,6 +52,13 @@ EXECUTOR_SYSTEM_PROMPT = """You are an EXECUTOR agent. Your job is to complete O
 - Skill: {skill_name} — {skill_description}
 - Task spec: {task_spec}
 
+**IMPORTANT: The task spec above contains the EXACT parameters to use.**
+Do NOT invent your own query, URL, or search terms.  Use the values from
+the task spec exactly as given.  If the task spec says "iPhone 15", do NOT
+search for "laptop" or any other product.  If a required parameter is
+missing from the task spec, report it as a concern — do not substitute
+your own defaults.
+
 ## Available Tools
 {tool_descriptions}
 
