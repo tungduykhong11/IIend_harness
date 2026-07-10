@@ -81,6 +81,12 @@ logger = logging.getLogger(__name__)
 SKILL_EXTRACTION_PROMPT = """You are a task parser. Given a user request and a list of available skills,
 extract the target skill and its parameters.
 
+**IMPORTANT:** The params you extract are forwarded to ALL skills in the
+dependency chain, not just the target skill.  Include ALL information the
+user provided — especially the search query (what product to analyze),
+platform (ebay/amazon/...), and any other details.  Use common-sense
+parameter names like "query", "platform", "target_item", "max_items".
+
 Available skills:
 {skill_listings}
 

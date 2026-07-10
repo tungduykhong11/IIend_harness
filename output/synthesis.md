@@ -1,23 +1,23 @@
-## Session Summary
+Based on the provided session details, here is the session summary:
 
-### 1. Session Goal Fulfillment
-The session goal was to conduct an **Interactive session**, but no interactive tasks were completed. The session was initiated but did not proceed to any meaningful interaction or execution of work.
+**Session Summary**
 
-### 2. Key Findings
-- **No tasks were completed** during this session. The session started with an empty slate—no prior conversation or completed tasks to build upon.
-- The only attempted task was **data_provider**, which was **skipped**, and consequently **analyze_pricing** could not be executed due to dependency on the first task.
+**1. Session Goal:**
+The goal was an "Interactive session," intended to involve collaborative exploration or task execution. However, the session did not contain any user input, conversation, or completed tasks, resulting in no interactive work being performed.
 
-### 3. Limitations & Skipped Tasks
-- **Skipped tasks:**
-  - `data_provider` — could not be completed (reason unspecified; likely missing input, dataset, or user direction)
-  - `analyze_pricing` — blocked because it required output from `data_provider`
-- **Limitation:** The session produced no artifacts, outputs, or findings to report.
+**2. Key Findings:**
+No findings were generated, as no tasks were initiated or completed during this session.
 
-### 4. Next Steps (Suggested)
-To make progress, the following actions are recommended:
-1. **Define the data source:** Specify which provider or dataset should be used (e.g., CSV file, API, database)
-2. **Provide context for pricing analysis:** Clarify the scope (e.g., competitor pricing, product categories, time period)
-3. **Restart the session** with clear input and objectives for the `data_provider` and `analyze_pricing` tasks
+**3. Limitations & Skipped Tasks:**
+The following tasks were identified but could not be completed due to the absence of user instructions (no conversation or tasks were submitted):
+- **data_provider** (Skipped)
+- **analyze_pricing** (Skipped)
 
-### 5. Generated Artifact Files
-- **None** — No files were created or generated during this session.
+**4. Next Steps (Suggested):**
+To proceed effectively, the user should:
+- Provide specific instructions or a dataset for analysis.
+- Clarify the scope of the "pricing analysis" (e.g., competitive analysis, cost modeling, or price optimization).
+- Confirm which data source should be used for the `data_provider` task.
+
+**5. Generated Artifacts:**
+No artifacts (files, scripts, or reports) were generated during this session.
