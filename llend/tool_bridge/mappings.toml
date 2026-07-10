@@ -16,14 +16,10 @@
 #     <key> = <value>
 
 [actions.fetch_web_page]
-tool = "crawl4ai"
-function = "AsyncWebCrawler.arun"
+tool = "llend.parsers.web_fetcher"
+function = "fetch_web_page"
 timeout_ms = 30000
 retry = 3
-
-[actions.fetch_web_page.config]
-stealth_mode = true
-user_agent = "llend-harness/0.1"
 
 [actions.parse_listing_html]
 tool = "llend.parsers"

@@ -340,16 +340,14 @@ class ExecutorAgent:
                             tc["name"], tc.get("arguments", {}),
                         )
                         messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc.get("id", ""),
-                            "content": _json.dumps(result, default=str),
+                            "role": "user",
+                            "content": f"Tool result for {tc['name']}: {_json.dumps(result, default=str)}",
                         })
                     except ActionDispatchError as exc:
                         # §2.6: Tool call fails → let LLM decide: retry or error
                         messages.append({
-                            "role": "tool",
-                            "tool_call_id": tc.get("id", ""),
-                            "content": _json.dumps({"error": str(exc)}),
+                            "role": "user",
+                            "content": f"Tool error for {tc['name']}: {exc}",
                         })
                 continue  # Back to LLM with tool results
 
