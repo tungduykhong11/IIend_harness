@@ -311,13 +311,15 @@ class DeepSeekClient(LLMClient):
             if choice.message.content:
                 parts.append(choice.message.content)
             for tc in choice.message.tool_calls:
+                # Parse arguments JSON — fall back to raw string on malformed JSON
+                try:
+                    args = _json.loads(tc.function.arguments) if tc.function.arguments else {}
+                except (_json.JSONDecodeError, TypeError):
+                    args = {"_raw": tc.function.arguments or ""}
                 parts.append(_json.dumps({
                     "name": tc.function.name,
                     "id": tc.id,
-                    "arguments": (
-                        _json.loads(tc.function.arguments)
-                        if tc.function.arguments else {}
-                    ),
+                    "arguments": args,
                 }))
             return "\n".join(parts)
 
