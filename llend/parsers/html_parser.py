@@ -7,10 +7,15 @@ Used by the ``parse_listing_html`` action in ``tool_bridge/mappings.toml``
 
 from __future__ import annotations
 
+import json as _json
 import logging
+import warnings
 from typing import Any
 
-from bs4 import BeautifulSoup
+from bs4 import BeautifulSoup, MarkupResemblesLocatorWarning
+
+# Suppress BeautifulSoup warning when HTML content looks like a URL
+warnings.filterwarnings("ignore", category=MarkupResemblesLocatorWarning)
 
 logger = logging.getLogger(__name__)
 
@@ -56,8 +61,9 @@ _FIELD_SELECTORS: dict[str, list[str]] = {
 
 
 def parse_product_listing(
-    html: str,
+    html: str = "",
     schema: dict[str, Any] | None = None,
+    **kwargs: Any,
 ) -> list[dict[str, Any]]:
     """Parse raw HTML into a list of product listing dicts.
 
@@ -68,13 +74,34 @@ def parse_product_listing(
     schema:
         Optional field schema.  If provided, only extract fields named in
         the schema's ``properties`` keys.  Otherwise extract all known fields.
+    **kwargs:
+        Accepts ``_raw`` fallback from malformed LLM arguments — attempts
+        to extract HTML content from it.
 
     Returns
     -------
     list[dict]
-        One dict per product listing found on the page.  Typical fields:
-        ``title``, ``price``, ``condition``, ``seller``, ``shipping``, ``url``.
+        One dict per product listing found on the page.
     """
+    # Normalize: if html is empty but we got _raw, try to extract from it
+    if not html and "_raw" in kwargs:
+        raw = kwargs["_raw"]
+        if isinstance(raw, str):
+            try:
+                raw_obj = _json.loads(raw)
+                if isinstance(raw_obj, dict):
+                    html = raw_obj.get("html", raw_obj.get("content", raw))
+            except (_json.JSONDecodeError, TypeError):
+                html = raw
+
+    # Handle dict input (LLM may pass structured data)
+    if isinstance(html, dict):
+        html = html.get("html", html.get("content", str(html)))
+
+    if not html or not isinstance(html, str):
+        logger.warning("No valid HTML content to parse")
+        return []
+
     soup = BeautifulSoup(html, "html.parser")
 
     # Determine which fields to extract
