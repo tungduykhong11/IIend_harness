@@ -58,9 +58,9 @@ class Message(BaseModel):
 | `task.verdict` | Reviewer → Orch | `{task_id, verdict: Verdict, issues: ReviewIssue[], confidence: float}` | `verdict` uses `Verdict` enum. `issues` is a list of `ReviewIssue` objects. `confidence` is 0.0–1.0. |
 | `interrupt.raise` | Any → Orch | `{message, options: str[], context: {task_id, current_step, relevant_summary?}}` | Agent needs human judgment. `context` carries enough info for human to decide without reading full history. |
 | `interrupt.response` | Orch → Agent | `{decision, human_note?}` | Human's answer fed back |
-| `session.start` | Runtime → Orch | `{goal, params}` | New session initiated |
+| `session.start` | Runtime → Orch | `{goal, params}` | ~~New session initiated~~ **Deprecated v0.1:** Removed — `"runtime"` is not a routable agent type (§2.4). Session goal recorded directly via `_session_mgr.start()`. |
 | `user.message` | Human → Orch | `{text: str}` | General user input during a session. Orchestrator classifies and routes per Spec 004 §3. Sent by CLI, Web UI, or any human-facing channel. |
-| `session.complete` | Orch → Runtime | `{summary: str, artifacts: Artifact[]}` | Final result. `Artifact = {name, path, type, description?}` — file paths relative to session output dir. |
+| `session.complete` | Orch → Runtime | `{summary: str, artifacts: Artifact[]}` | ~~Final result. `Artifact = {name, path, type, description?}` — file paths relative to session output dir.~~ **Deprecated v0.1:** Removed — same reason as `session.start`. Synthesis saved to disk by `_session_mgr.complete()`. |
 | `agent.error` | Any → Orch | `{error_code: AgentErrorCode, detail: str, recoverable: bool}` | Agent crashed / timed out / validation failed. See `AgentErrorCode` enum. |
 | `agent.heartbeat` | Any → Orch | `{}` | Still alive (if idle > 30s) |
 
@@ -161,6 +161,8 @@ Human ────→ Orchestrator ──→ Reviewer
 ```
 
 This is simpler than a full mesh and makes every decision traceable. It also means the Orchestrator always knows the full state of every in-flight task and conversation.
+
+> **v0.1 note:** The runtime itself (`"runtime"`) is NOT a routable agent type. It is infrastructure, not an agent — it has no `agent_type` registered in `_resolve_recipient()`. Messages with `recipient="runtime"` are always dropped with a warning. Do not send messages to `"runtime"`.
 
 ### 2.5 Reply Chains
 
@@ -375,8 +377,8 @@ Channels mentioned in spec but implemented later: Telegram, Discord, WebSocket (
 ```
 1. Human: "Phân tích thị trường iPhone 15 trên eBay"
 
-2. Runtime spawns Orchestrator
-   → Message(session.start, goal="Phân tích thị trường iPhone 15 trên eBay")
+2. Runtime spawns Orchestrator with `session_goal="Phân tích thị trường iPhone 15 trên eBay"`
+   → Orchestrator.start() records goal via `_session_mgr.start()` (see Spec 004 §11.1)
 
 3. Orchestrator spawns Responder (Spec 003) — lives entire session for conversational Q&A
 

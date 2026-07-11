@@ -998,7 +998,10 @@ Spec 002 does not add new `msg_type` values. The existing `task.dispatch` and `t
 
 6. Orchestrator dispatches Task 1: data_provider
    → Message(task.dispatch) with skill_context for data_provider
-   → Executor #1 runs → crawl → clean → task.result(dataset)
+   → Executor #1 calls `fetch_web_page(extract_listings=true)` — extraction
+     is unified with fetch (CSS for eBay, LLM for unknown sites per §5.5).
+     No separate `parse_listing_html` step needed.
+   → Aggregates listings → clean → task.result(dataset)
 
 7. Orchestrator dispatches Task 2: analyze_pricing
    → Message(task.dispatch) with skill_context + dataset_ref = task-1.output
