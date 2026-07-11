@@ -87,14 +87,14 @@ class ProgressReporter:
         path = " → ".join(skill_names)
         await self.emit(ProgressEvent(
             level="info",
-            message=f"📋 Plan: {path} ({len(plan.skills)} task(s))",
+            message=f"[PLAN] {path} ({len(plan.skills)} task(s))",
         ))
 
     async def task_start(self, task_spec: TaskSpec, task_id: UUID, total: int) -> None:
         """Emit a task-start event.  §12.1."""
         await self.emit(ProgressEvent(
             level="task_start",
-            message=f"🔄 {task_spec.skill_name}...",
+            message=f"[...] {task_spec.skill_name}...",
             task_id=task_id,
             step=(task_spec.step, total),
         ))
@@ -105,7 +105,7 @@ class ProgressReporter:
         """Emit a task-complete event.  §12.1."""
         await self.emit(ProgressEvent(
             level="task_complete",
-            message=f"✅ {summary}",
+            message=f"[OK] {summary}",
             task_id=task_id,
             step=(task_spec.step, total),
         ))
@@ -114,21 +114,21 @@ class ProgressReporter:
         """Emit a warning about a task.  §12.1."""
         await self.emit(ProgressEvent(
             level="warning",
-            message=f"⚠️ [{task_spec.skill_name}] {message}",
+            message=f"[WARN] [{task_spec.skill_name}] {message}",
         ))
 
     async def error(self, message: str) -> None:
         """Emit an error event.  §12.1."""
         await self.emit(ProgressEvent(
             level="error",
-            message=f"❌ {message}",
+            message=f"[ERROR] {message}",
         ))
 
     async def session_complete(self) -> None:
         """Emit session-complete event.  §12.1."""
         await self.emit(ProgressEvent(
             level="info",
-            message="📊 Session complete.",
+            message="[DONE] Session complete.",
         ))
 
 
@@ -149,10 +149,10 @@ def format_plan_progress(
 
     Produces the "Đang làm gì đấy?" output::
 
-        📋 Progress:
-          [✅] data_provider — completed (500 listings)
-          [🔄] analyze_pricing — running (elapsed: 45s)
-          [⏳] write_report — waiting
+        [PLAN] Progress:
+          [OK] data_provider — completed (500 listings)
+          [...] analyze_pricing — running (elapsed: 45s)
+          [--] write_report — waiting
 
     Parameters
     ----------
@@ -163,16 +163,16 @@ def format_plan_progress(
         Optional detail string for the active task
         (e.g. ``"elapsed: 45s"``).
     """
-    lines: list[str] = ["📋 Progress:"]
+    lines: list[str] = ["[PLAN] Progress:"]
     details = completed_details or {}
     for ts in plan.skills:
         if ts.skill_name in completed:
             detail = details.get(ts.skill_name, "")
             suffix = f" — completed ({detail})" if detail else " — completed"
-            lines.append(f"  [✅] {ts.skill_name}{suffix}")
+            lines.append(f"  [OK] {ts.skill_name}{suffix}")
         elif ts.skill_name == active:
             suffix = f" — running ({active_detail})" if active_detail else " — running"
-            lines.append(f"  [🔄] {ts.skill_name}{suffix}")
+            lines.append(f"  [...] {ts.skill_name}{suffix}")
         else:
-            lines.append(f"  [⏳] {ts.skill_name} — waiting")
+            lines.append(f"  [--] {ts.skill_name} — waiting")
     return "\n".join(lines)
