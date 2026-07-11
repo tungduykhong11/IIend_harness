@@ -729,13 +729,13 @@ class OrchestratorAgent:
             # Handler outputs are guaranteed correct format (financial-research pattern).
             if result_msg.payload.get("_handler_produced"):
                 # Use handler's recommendation text directly if available
-                summary_text = _extract_recommendation(output) or f"Completed {task_spec.skill_name}."
+                summary_text = self._extract_recommendation(output) or f"Completed {task_spec.skill_name}."
                 summary = TaskResultSummary(
                     task_id=str(task_id),
                     skill_name=task_spec.skill_name,
                     status=TaskStatus.DONE,
                     summary=summary_text,
-                    key_metrics=_extract_key_metrics(output),
+                    key_metrics=self._extract_key_metrics(output),
                 )
                 self._session_mgr.state.add_task_result(summary)
                 await self._progress.task_complete(
@@ -1334,36 +1334,35 @@ class OrchestratorAgent:
         )
         await self._runtime.send(msg)
 
-def _extract_recommendation(output: dict) -> str | None:
-    """Extract human-readable recommendation from handler output."""
-    if isinstance(output, dict):
-        rec = output.get("recommendation")
-        if rec and isinstance(rec, str) and len(rec) > 10:
-            return rec
-        # Fallback: build from market data
-        market = output.get("market", {})
-        if market:
-            med = market.get("median", 0)
-            lo = market.get("min", 0)
-            hi = market.get("max", 0)
-            n = market.get("count", 0)
-            if med > 0:
-                return (
-                    f"Giá trung bình {med:,.0f} VNĐ, "
-                    f"dao động từ {lo:,.0f} đến {hi:,.0f} VNĐ "
-                    f"({n} sản phẩm)."
-                )
-    return None
+    @staticmethod
+    def _extract_recommendation(output: Any) -> str | None:
+        """Extract human-readable recommendation from handler output."""
+        if isinstance(output, dict):
+            rec = output.get("recommendation")
+            if rec and isinstance(rec, str) and len(rec) > 10:
+                return rec
+            market = output.get("market", {})
+            if market:
+                med = market.get("median", 0)
+                lo = market.get("min", 0)
+                hi = market.get("max", 0)
+                n = market.get("count", 0)
+                if med > 0:
+                    return (
+                        f"Giá trung bình {med:,.0f} VNĐ, "
+                        f"dao động từ {lo:,.0f} đến {hi:,.0f} VNĐ "
+                        f"({n} sản phẩm)."
+                    )
+        return None
 
-
-def _extract_key_metrics(output: dict) -> dict:
-    """Extract numeric metrics from handler output."""
-    if isinstance(output, dict):
-        market = output.get("market", {})
-        if market:
-            return {k: v for k, v in market.items() if isinstance(v, (int, float))}
-    return {}
-
+    @staticmethod
+    def _extract_key_metrics(output: Any) -> dict:
+        """Extract numeric metrics from handler output."""
+        if isinstance(output, dict):
+            market = output.get("market", {})
+            if market:
+                return {k: v for k, v in market.items() if isinstance(v, (int, float))}
+        return {}
 
     def _validate_output(self, output: Any, skill: Skill) -> list[str]:
         """Validate Executor output against the skill's output schema.  §4.2 step 5.
