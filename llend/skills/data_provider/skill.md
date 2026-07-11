@@ -20,6 +20,11 @@ enforcement: suggested
 5. Return `ScrapeResult` with validated product listings
 
 ## Notes
+- **Always call `fetch_web_page` with `extract_listings=true`** — the tool
+  already returns structured listings (CSS extraction for eBay/Amazon, LLM
+  extraction for unknown sites).  No separate parsing step needed.
+- The `listings` field in the response contains the structured product data.
+  Aggregate listings from all fetched URLs into a single `ScrapeResult`.
 - Rate limiting: respect platform's robots.txt, add 1-3s delay between pages.
 - If results exceed `max_items`, use pagination to collect more.
 - If platform blocks the scraper (CAPTCHA, 403), raise `interrupt` to ask human for alternative approach.
