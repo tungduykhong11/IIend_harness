@@ -64,6 +64,7 @@ def parse_product_listing(
     html: str = "",
     schema: dict[str, Any] | None = None,
     platform: str = "auto",
+    url: str = "",
     **kwargs: Any,
 ) -> list[dict[str, Any]]:
     """Parse raw HTML into a list of product listing dicts.
@@ -77,9 +78,12 @@ def parse_product_listing(
         the schema's ``properties`` keys.  Otherwise extract all known fields.
     platform:
         Hint for the parser: ``"ebay"``, ``"amazon"``, or ``"auto"``.
-        When ``"auto"`` and no listing containers are found, returns an empty
-        list immediately (rather than trying the poor full-page fallback).
-        The Executor's LLM should handle extraction from markdown instead.
+        When ``"auto"`` and no listing containers are found, checks the
+        web_fetcher URL cache for pre-extracted listings (from
+        ``LLMExtractionStrategy``).  Falls back to empty list if none found.
+    url:
+        The URL that was fetched.  Used to look up pre-extracted listings
+        from the web_fetcher cache when CSS parsing fails.
     **kwargs:
         Accepts ``_raw`` fallback from malformed LLM arguments — attempts
         to extract HTML content from it.
@@ -121,9 +125,15 @@ def parse_product_listing(
 
     if not listings:
         if platform == "auto":
-            # Unknown platform — no CSS selectors match.  Don't waste time with
-            # the full-page fallback; return empty and let the Executor's LLM
-            # extract structured data from markdown instead.
+            # Unknown platform — no CSS selectors match.  Check if fetch_web_page
+            # already has LLM-extracted listings in its URL cache.
+            cached = _lookup_url_cache(url)
+            if cached:
+                logger.info(
+                    "Using %d pre-extracted listings from web_fetcher cache for %s",
+                    len(cached), url,
+                )
+                return cached
             logger.info(
                 "No listing containers found for platform=%r — "
                 "returning empty; Executor LLM should parse markdown",
@@ -231,6 +241,27 @@ def _extract_field(container: Any, field: str) -> str | None:
             if text:
                 return _clean_text(text, field)
     return None
+
+
+def _lookup_url_cache(url: str) -> list[dict[str, Any]]:
+    """Check the web_fetcher URL cache for pre-extracted listings.
+
+    When ``fetch_web_page`` uses ``LLMExtractionStrategy`` for unknown
+    platforms, the structured listings are cached by URL.  This lets
+    ``parse_listing_html`` return those listings directly instead of
+    failing with CSS selectors that don't match the unknown site.
+    """
+    if not url:
+        return []
+    try:
+        from llend.parsers.web_fetcher import _url_cache  # noqa: PLC0415
+
+        cached = _url_cache.get(url)
+        if cached and cached.get("listings"):
+            return cached["listings"]
+    except Exception:
+        pass
+    return []
 
 
 def _clean_text(text: str, field: str) -> str:

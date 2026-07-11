@@ -580,9 +580,9 @@ class OrchestratorAgent:
         # §5.3: Report if no tasks completed successfully
         if not completed:
             await self._progress.error(
-                "Không thể hoàn thành yêu cầu. Có thể do: "
-                "trang web chặn bot, cấu trúc HTML không được hỗ trợ, "
-                "hoặc không tìm thấy dữ liệu sản phẩm phù hợp."
+                "Cannot complete request. Possible causes: "
+                "website blocks bots, unsupported HTML structure, "
+                "or no matching product data found."
             )
 
     async def _execute_plan_parallel(self, plan: ExecutionPlan) -> None:
