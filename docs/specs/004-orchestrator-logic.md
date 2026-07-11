@@ -187,6 +187,12 @@ Step 4: Wait for task.result
   → Executor sends Message(msg_type=TASK_RESULT, payload={output, concerns?, artifacts?})
   → On timeout → kill Executor → retry or fail task
 
+  ⚠️ **Inbox race condition (fixed v0.1):** Both `_main_loop()` and `_await_response()`
+  consume from the same `self._inbox` queue.  If `_main_loop` wins the race on a
+  `TASK_RESULT` or `TASK_VERDICT`, `_handle_agent_response()` re-queues the message
+  so `_await_response()` can consume it.  Without this, the message is lost and
+  `_await_response` waits the full timeout (300s) before giving up.
+
 Step 5: Validate output schema
   → If output_schema exists:
       try: SkillOutputModel.model_validate(executor_output)
@@ -361,6 +367,10 @@ async def execute_plan(plan: ExecutionPlan) -> list[TaskResultSummary]:
 ```
 
 **Guard:** Parallel execution is gated by a config flag (`execution.allow_parallel = true`). Default: `false` (sequential only) for v0.
+
+> **v0.1 fix:** `_execute_plan_sequential()` now emits a user-facing error when
+> zero tasks complete successfully ("Không thể hoàn thành yêu cầu. Có thể do: …").
+> Previously the loop exited silently and the user got no feedback.
 
 ---
 
@@ -635,11 +645,17 @@ Runtime starts
      │
      ▼
 Orchestrator.spawn("orchestrator", {session_goal, user_profile})
-     │
-     ├── Load UserProfile from ~/.llend/user_profile.json
-     ├── Spawn Responder (if responder.enabled)
-     ├── Send session.start to Runtime
-     └── Ready for human input
+      │
+      ├── Load UserProfile from ~/.llend/user_profile.json
+      ├── Spawn Responder (if responder.enabled)
+      └── Ready for human input
+```
+
+> **v0.1 fix:** Removed "Send session.start to Runtime" from the start sequence.
+> The runtime is not a routable agent — messages with `recipient="runtime"` have
+> no matching `agent_type` in `_resolve_recipient()` and are always dropped.
+> Session goal is already recorded by `_session_mgr.start()` so the message
+> served no purpose.
 ```
 
 ### 11.2 During Session
