@@ -33,10 +33,20 @@ logger = logging.getLogger(__name__)
 
 _url_cache: dict[str, dict[str, Any]] = {}
 
+# Accumulator: every fetch_web_page call adds listings here.
+# The LLM sees the growing total with each call — no manual aggregation needed.
+# Pattern from financial-research-analyst: tool does the accumulation internally.
+_accumulated_listings: list[dict[str, Any]] = []
+_accumulated_errors: list[str] = []
+_seen_urls: set[str] = set()  # for dedup
+
 
 def clear_cache() -> None:
-    """Clear the URL fetch cache (useful between sessions)."""
+    """Clear the URL fetch cache and accumulator (useful between sessions)."""
     _url_cache.clear()
+    _accumulated_listings.clear()
+    _accumulated_errors.clear()
+    _seen_urls.clear()
 
 
 # ---------------------------------------------------------------------------
@@ -179,17 +189,34 @@ async def fetch_web_page(
         except Exception:
             logger.warning("Failed to parse extracted content", exc_info=True)
 
-    # When we have structured listings, return only the listings + summary —
-    # don't overload the Executor LLM with raw HTML/markdown (50KB+ per URL).
-    # The LLM needs to aggregate results from multiple URLs, so keep each
-    # response light.
+    # --- Accumulate listings globally (financial-research-analyst pattern) ---
+    # Every call adds to the pool.  The LLM sees the growing total each time —
+    # no manual aggregation across 14 calls needed.  Last call has everything.
+    if listings:
+        for item in listings:
+            item_url = item.get("url", "")
+            if item_url and item_url in _seen_urls:
+                continue  # dedup by URL
+            if item_url:
+                _seen_urls.add(item_url)
+            _accumulated_listings.append(item)
+
+    if not result.success:
+        _accumulated_errors.append(f"Failed to fetch {url}: status {getattr(result, 'status_code', 0)}")
+
+    total_accumulated = len(_accumulated_listings)
+
+    # Build response — always include the ACCUMULATED total so the LLM
+    # can just use the last response's data directly.
     response = {
         "url": url,
         "title": getattr(result, "title", ""),
         "success": result.success,
         "status_code": getattr(result, "status_code", 0),
-        "listings": listings,
-        "listing_count": len(listings),
+        "listings": listings,                        # this URL's listings
+        "listing_count": len(listings),               # this URL's count
+        "total_accumulated": total_accumulated,       # running total across all URLs
+        "total_errors": len(_accumulated_errors),
     }
     # Only include markdown if there are no structured listings
     if not listings:

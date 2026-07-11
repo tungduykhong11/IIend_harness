@@ -24,41 +24,23 @@ class DataProviderSkill:
         INPUT: query: str — search query used
         OUTPUT: {listings: list[dict], total_scraped: int, total_valid: int, platform: str, query: str, errors: list}
         """
-        from llend.parsers.web_fetcher import _url_cache
+        from llend.parsers.web_fetcher import (
+            _accumulated_errors,
+            _accumulated_listings,
+            _url_cache,
+        )
 
-        all_listings: list[dict] = []
-        errors: list[str] = []
-
-        for url, cached in _url_cache.items():
-            if cached.get("success") and cached.get("listings"):
-                all_listings.extend(cached["listings"])
-            elif not cached.get("success"):
-                errors.append(f"Failed to fetch {url}: status {cached.get('status_code')}")
-
-        # Deduplicate by URL
-        seen_urls: set[str] = set()
-        unique: list[dict] = []
-        for item in all_listings:
-            item_url = item.get("url", "")
-            if item_url and item_url not in seen_urls:
-                seen_urls.add(item_url)
-                unique.append(item)
-            elif not item_url:
-                unique.append(item)
-
-        total = len(all_listings)
-        valid = len(unique)
-
+        total = len(_accumulated_listings)
         logger.info(
-            "get_cached_listings: %d total, %d unique from %d cached URLs",
-            total, valid, len(_url_cache),
+            "get_cached_listings: %d accumulated from %d cached URLs",
+            total, len(_url_cache),
         )
 
         return {
-            "listings": unique,
+            "listings": _accumulated_listings,
             "total_scraped": total,
-            "total_valid": valid,
+            "total_valid": total,
             "platform": platform,
             "query": query,
-            "errors": errors,
+            "errors": list(_accumulated_errors),
         }
