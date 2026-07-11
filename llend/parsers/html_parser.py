@@ -124,23 +124,33 @@ def parse_product_listing(
     listings = _find_listing_containers(soup)
 
     if not listings:
-        if platform == "auto":
-            # Unknown platform — no CSS selectors match.  Check if fetch_web_page
-            # already has LLM-extracted listings in its URL cache.
-            cached = _lookup_url_cache(url)
-            if cached:
-                logger.info(
-                    "Using %d pre-extracted listings from web_fetcher cache for %s",
-                    len(cached), url,
-                )
-                return cached
+        # Check if web_fetcher already has LLM-extracted listings for this URL.
+        # This catches both platform="auto" AND platform="cellphones.com.vn"
+        # (LLMs often pass the domain name as platform).
+        cached = _lookup_url_cache(url)
+        if cached:
+            logger.info(
+                "Using %d pre-extracted listings from web_fetcher cache for %s",
+                len(cached), url,
+            )
+            return cached
+
+        if platform in ("ebay", "amazon"):
+            # Known platform but no containers — try full-page fallback
+            logger.warning(
+                "No listing containers found for platform=%r — "
+                "extracting from full page",
+                platform,
+            )
+            listings = [soup]
+        else:
+            # Unknown platform, no cache — give up early
             logger.info(
                 "No listing containers found for platform=%r — "
-                "returning empty; Executor LLM should parse markdown",
+                "returning empty",
                 platform,
             )
             return []
-        # Known platform but no containers — try full-page fallback
         logger.warning(
             "No listing containers found for platform=%r — "
             "extracting from full page",
