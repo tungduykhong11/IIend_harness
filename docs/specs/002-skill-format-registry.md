@@ -572,20 +572,23 @@ generates:
 
 ### 5.5 Extraction Strategy (Web Fetcher)
 
-The `fetch_web_page` action uses crawl4ai's dual extraction pattern
-(reference: crawl4ai codebase):
+The `fetch_web_page` function in `llend/parsers/web_fetcher.py` uses
+crawl4ai's dual extraction pattern (reference: crawl4ai codebase):
 
 | Platform | Strategy | Mechanism |
 |----------|----------|-----------|
-| Known (`"ebay"`, `"amazon"`) | CSS extraction | `JsonCssExtractionStrategy` with per-site schema — fast, deterministic, zero LLM cost |
-| Unknown (`"auto"`) | LLM extraction | `LLMExtractionStrategy` with instruction `"Extract all product listings..."` — crawl4ai's built-in, uses the project's LLM (DeepSeek via `DEEPSEEK_API_KEY`). Works with any website without knowing its HTML structure upfront. |
+| Known (`"ebay"`, `"amazon"`) | CSS extraction | `JsonCssExtractionStrategy` with per-site schema |
+| Unknown (`"auto"`) | LLM extraction | `LLMExtractionStrategy` with schema + instruction |
 
-**URL cache:** `fetch_web_page` maintains a module-level `_url_cache` dict to
-prevent duplicate crawling across retries. Same URL fetched once per session.
+**Financial-research pattern:** Skills expose high-level actions, not
+low-level primitives.  The `data_provider` skill has a single action
+`search_listings(platform, query)` that internally calls `fetch_web_page`
+for multiple URLs and returns a complete `ScrapeResult`.  The Executor
+LLM calls ONE action — no URL construction, no aggregation, no dedup.
 
-**CSS extraction schemas** are defined in `llend/parsers/web_fetcher.py` in
-the `_KNOWN_SCHEMAS` dict. Adding a new known site requires only adding its
-CSS schema — no changes to the skill or tool bridge.
+**URL cache** and **accumulator** are module-level in `web_fetcher.py`
+for dedup and cross-call aggregation.  `clear_cache()` resets state
+between searches.
 
 ### 5.3 Why TOML + Python (not just TOML)
 
@@ -998,10 +1001,10 @@ Spec 002 does not add new `msg_type` values. The existing `task.dispatch` and `t
 
 6. Orchestrator dispatches Task 1: data_provider
    → Message(task.dispatch) with skill_context for data_provider
-   → Executor #1 calls `fetch_web_page(extract_listings=true)` — extraction
-     is unified with fetch (CSS for eBay, LLM for unknown sites per §5.5).
-     No separate `parse_listing_html` step needed.
-   → Aggregates listings → clean → task.result(dataset)
+   → Executor #1 calls `search_listings(platform, query)` — ONE call.
+     Handler internally crawls 3-5 URLs, extracts (CSS/LLM per §5.5),
+     aggregates, deduplicates.  Returns complete `ScrapeResult`.
+   → task.result(dataset)
 
 7. Orchestrator dispatches Task 2: analyze_pricing
    → Message(task.dispatch) with skill_context + dataset_ref = task-1.output
