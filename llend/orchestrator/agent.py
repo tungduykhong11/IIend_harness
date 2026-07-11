@@ -270,12 +270,9 @@ class OrchestratorAgent:
         if self._config.responder_enabled:
             await self._spawn_responder()
 
-        # §11.1 step 3: Send session.start to Runtime
-        await self._send_message(
-            recipient="runtime",
-            msg_type=MsgType.SESSION_START,
-            payload={"session_goal": session_goal},
-        )
+        # §11.1 step 3: session.start removed — the runtime is not a routable
+        # agent and session goal is already recorded by _session_mgr.start().
+        # See: _resolve_recipient() in asyncio_runtime.py drops messages to "runtime".
 
         # §11.1 step 4: Register handler
         await self._runtime.register_handler(self._instance_id, self._message_handler)
@@ -385,6 +382,16 @@ class OrchestratorAgent:
             except Exception:
                 logger.exception("Error processing message id=%s", msg.id)
 
+    async def _handle_agent_response(self, msg: Message, agent_role: str) -> None:
+        """Re-queue TASK_RESULT / TASK_VERDICT for _await_response().
+
+        These messages are consumed by _await_response() inside
+        _execute_task_loop(), NOT by _main_loop.  If _main_loop wins the
+        inbox race, we must put the message back so _await_response doesn't
+        starve and time out.
+        """
+        self._inbox.put_nowait(msg)
+
     async def _process_message(self, msg: Message) -> None:
         """Route a single message based on its type and classification.  §3.4."""
         msg_type = msg.msg_type
@@ -401,11 +408,11 @@ class OrchestratorAgent:
             await self._handle_human_message(msg)
 
         elif msg_type == MsgType.TASK_RESULT:
-            # Executor finished — will be picked up by _execute_task_loop
+            # Executor finished — consumed by _execute_task_loop → _await_response
             await self._handle_agent_response(msg, "executor")
 
         elif msg_type == MsgType.TASK_VERDICT:
-            # Reviewer finished — will be picked up by _execute_task_loop
+            # Reviewer finished — consumed by _execute_task_loop → _await_response
             await self._handle_agent_response(msg, "reviewer")
 
         elif msg_type == MsgType.INTERRUPT_RAISE:
@@ -572,6 +579,14 @@ class OrchestratorAgent:
                         f"Mandatory task {task_spec.skill_name} failed — aborting session."
                     )
                     break
+
+        # §5.3: Report if no tasks completed successfully
+        if not completed:
+            await self._progress.error(
+                "Không thể hoàn thành yêu cầu. Có thể do: "
+                "trang web chặn bot, cấu trúc HTML không được hỗ trợ, "
+                "hoặc không tìm thấy dữ liệu sản phẩm phù hợp."
+            )
 
     async def _execute_plan_parallel(self, plan: ExecutionPlan) -> None:
         """Execute tasks with parallel batches where possible.  §5.4.
