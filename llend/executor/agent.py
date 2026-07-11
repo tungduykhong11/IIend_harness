@@ -380,7 +380,7 @@ class ExecutorAgent:
             # No tool calls — LLM produced final answer  §2.4
             parsed = self._parse_output(response_text)
             if not parsed.get("parsed_ok", True):
-                # §2.6: Output doesn't parse as JSON — try auto-wrap from tool results
+                # §2.6: Output doesn't parse as JSON — try auto-wrap
                 auto = self._auto_wrap_from_tools(_tool_results)
                 if auto:
                     return auto
@@ -389,6 +389,14 @@ class ExecutorAgent:
                     f"Output could not be parsed as JSON. Raw text: {parsed.get('raw_text', response_text)[:500]}",
                 )
                 return parsed
+
+            # LLM output parsed OK, but prefer tool result if the LLM output
+            # looks empty/wrong while a tool returned a complete result
+            llm_output = parsed.get("output")
+            if self._is_empty_output(llm_output):
+                auto = self._auto_wrap_from_tools(_tool_results)
+                if auto:
+                    return auto
             return parsed
 
         # Exhausted tool call limit — try auto-wrap from tool results  §2.6
@@ -434,8 +442,21 @@ class ExecutorAgent:
         return tool_calls
 
     # ------------------------------------------------------------------
-    # Auto-wrap tool results (financial-research pattern)
+    # Auto-wrap helpers (financial-research pattern)
     # ------------------------------------------------------------------
+
+    @staticmethod
+    def _is_empty_output(output: Any) -> bool:
+        """Check if an LLM-produced output looks empty/wrong."""
+        if output is None:
+            return True
+        if isinstance(output, dict):
+            meaningful = {"listings", "market", "median", "total_scraped", "recommendation", "price", "title"}
+            if not any(k in output for k in meaningful):
+                return True
+        if isinstance(output, list) and len(output) == 0:
+            return True
+        return False
 
     @staticmethod
     def _auto_wrap_from_tools(
