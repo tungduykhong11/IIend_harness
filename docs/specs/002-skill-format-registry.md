@@ -578,7 +578,7 @@ The `fetch_web_page` action uses crawl4ai's dual extraction pattern
 | Platform | Strategy | Mechanism |
 |----------|----------|-----------|
 | Known (`"ebay"`, `"amazon"`) | CSS extraction | `JsonCssExtractionStrategy` with per-site schema — fast, deterministic, zero LLM cost |
-| Unknown (`"auto"`) | Markdown passthrough | Returns crawl4ai's clean markdown output — the Executor's ReAct-loop LLM extracts structured data itself (equivalent to `LLMExtractionStrategy` but without the extra API call) |
+| Unknown (`"auto"`) | LLM extraction | `LLMExtractionStrategy` with instruction `"Extract all product listings..."` — crawl4ai's built-in, uses the project's LLM (DeepSeek via `DEEPSEEK_API_KEY`). Works with any website without knowing its HTML structure upfront. |
 
 **URL cache:** `fetch_web_page` maintains a module-level `_url_cache` dict to
 prevent duplicate crawling across retries. Same URL fetched once per session.
