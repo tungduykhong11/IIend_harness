@@ -63,16 +63,40 @@ _KNOWN_SCHEMAS: dict[str, dict[str, Any]] = {
 }
 
 # ---------------------------------------------------------------------------
-# LLM extraction instruction — used for unknown sites
+# LLM extraction config — used for unknown sites
 # ---------------------------------------------------------------------------
 
 _EXTRACTION_INSTRUCTION = (
     "Extract all product listings from this page. "
-    "For each listing, return: title, price (as a number), currency, "
+    "For each listing, extract: title, price (as a number), currency, "
     "condition (new/used/unknown), seller name, shipping info, "
-    "and the product URL. "
-    "Return as a JSON array of objects."
+    "and the product URL."
 )
+
+# JSON Schema for the expected output — crawl4ai passes this to the LLM
+# so it knows exactly what fields to return.  Matches ProductListing model.
+_EXTRACTION_SCHEMA = {
+    "type": "object",
+    "properties": {
+        "listings": {
+            "type": "array",
+            "items": {
+                "type": "object",
+                "properties": {
+                    "title": {"type": "string", "description": "Product title"},
+                    "price": {"type": "number", "description": "Price in listing currency"},
+                    "currency": {"type": "string", "description": "ISO 4217 currency code", "default": "VND"},
+                    "condition": {"type": "string", "description": "new, used, or unknown", "default": "unknown"},
+                    "seller": {"type": "string", "description": "Seller name", "default": "unknown"},
+                    "shipping": {"type": "string", "description": "Shipping cost or 'free'"},
+                    "url": {"type": "string", "description": "Product page URL"},
+                },
+                "required": ["title", "price", "url"],
+            },
+        }
+    },
+    "required": ["listings"],
+}
 
 
 # ---------------------------------------------------------------------------
@@ -118,6 +142,10 @@ async def fetch_web_page(
         browser_config.user_agent = user_agent
 
     # Decide extraction strategy based on platform
+    # Auto-detect platform from URL domain if not explicitly given
+    if platform == "auto":
+        platform = _detect_platform(url)
+
     schema = _KNOWN_SCHEMAS.get(platform) if extract_listings else None
     run_config: CrawlerRunConfig
     if schema is not None:
@@ -171,38 +199,67 @@ async def fetch_web_page(
 # ---------------------------------------------------------------------------
 
 
+def _detect_platform(url: str) -> str:
+    """Auto-detect e-commerce platform from URL domain.
+
+    Returns the platform key if recognized, ``"auto"`` otherwise.
+    """
+    from urllib.parse import urlparse
+
+    domain = urlparse(url).netloc.lower()
+    if "ebay" in domain:
+        return "ebay"
+    if "amazon" in domain:
+        return "amazon"
+    return "auto"
+
+
 def _build_llm_strategy() -> LLMExtractionStrategy:
     """Build an LLMExtractionStrategy using the configured LLM provider.
 
-    Uses environment variables (DEEPSEEK_API_KEY or OPENAI_API_KEY) to
-    configure crawl4ai's built-in LLM extraction.  Falls back to
-    crawl4ai's default provider if no env vars are set.
+    Uses environment variables per LLEND_PROVIDER to configure crawl4ai's
+    built-in LLM extraction.  Requires the matching API key env var.
     """
-    api_key = os.environ.get("DEEPSEEK_API_KEY") or os.environ.get("OPENAI_API_KEY")
+    provider = os.environ.get("LLEND_PROVIDER", "deepseek")
+    api_key: str | None = None
+    llm_config: LLMConfig | None = None
 
-    if api_key:
-        # Use the project's configured LLM provider
-        provider = os.environ.get("LLEND_PROVIDER", "deepseek")
-        if provider == "deepseek":
+    if provider == "deepseek":
+        api_key = os.environ.get("DEEPSEEK_API_KEY")
+        if api_key:
             llm_config = LLMConfig(
-                provider="openai/deepseek-chat",
+                provider="deepseek/deepseek-chat",
                 api_token=api_key,
                 base_url="https://api.deepseek.com/v1",
             )
-        else:
-            # Anthropic or other — use as-is
+    elif provider == "anthropic":
+        api_key = os.environ.get("ANTHROPIC_API_KEY")
+        if api_key:
             llm_config = LLMConfig(
-                provider=f"{provider}/claude-sonnet-4-20250514",
+                provider="anthropic/claude-sonnet-4-20250514",
                 api_token=api_key,
             )
     else:
-        # No API key configured — let crawl4ai use its defaults
-        logger.warning("No LLM API key found for extraction — using crawl4ai defaults")
-        llm_config = None
+        # Unknown provider — try OPENAI_API_KEY as generic fallback
+        api_key = os.environ.get("OPENAI_API_KEY")
+        if api_key:
+            llm_config = LLMConfig(
+                provider=provider,
+                api_token=api_key,
+            )
 
+    if llm_config is None:
+        logger.warning("No LLM API key found for provider=%r — crawl4ai defaults", provider)
+
+    # IMPORTANT: must pass schema + instruction together.
+    # extraction_type="schema" without schema → crawl4ai uses
+    # PROMPT_EXTRACT_INFERRED_SCHEMA which ignores the instruction.
+    # With schema + instruction → uses PROMPT_EXTRACT_SCHEMA_WITH_INSTRUCTION.
     return LLMExtractionStrategy(
         llm_config=llm_config,
         instruction=_EXTRACTION_INSTRUCTION,
+        schema=_EXTRACTION_SCHEMA,
         extraction_type="schema",
-        input_format="markdown",  # crawl4ai's clean markdown — LLM-friendly
+        input_format="markdown",
+        force_json_response=True,
     )
