@@ -344,6 +344,9 @@ class ExecutorAgent:
             {"role": "user", "content": f"Execute: {_json.dumps(self._task_spec)}"},
         ]
 
+        # Track tool results for auto-wrapping (financial-research pattern)
+        _tool_results: list[dict[str, Any]] = []
+
         for iteration in range(self._max_tool_calls):
             # Call LLM with tools  §2.4
             response_text = await self._llm.generate(messages, tools=tools if tools else None)
@@ -361,6 +364,7 @@ class ExecutorAgent:
                         result = await self._action_dispatcher.dispatch(
                             tc["name"], tc.get("arguments", {}),
                         )
+                        _tool_results.append({"name": tc["name"], "result": result})
                         messages.append({
                             "role": "user",
                             "content": f"Tool result for {tc['name']}: {_json.dumps(result, default=str)}",
@@ -376,7 +380,10 @@ class ExecutorAgent:
             # No tool calls — LLM produced final answer  §2.4
             parsed = self._parse_output(response_text)
             if not parsed.get("parsed_ok", True):
-                # §2.6: Output doesn't parse as JSON
+                # §2.6: Output doesn't parse as JSON — try auto-wrap from tool results
+                auto = self._auto_wrap_from_tools(_tool_results)
+                if auto:
+                    return auto
                 await self._send_error(
                     AgentErrorCode.VALIDATION_ERROR,
                     f"Output could not be parsed as JSON. Raw text: {parsed.get('raw_text', response_text)[:500]}",
@@ -384,7 +391,10 @@ class ExecutorAgent:
                 return parsed
             return parsed
 
-        # Exhausted tool call limit  §2.6
+        # Exhausted tool call limit — try auto-wrap from tool results  §2.6
+        auto = self._auto_wrap_from_tools(_tool_results)
+        if auto:
+            return auto
         return {
             "status": "error",
             "output": None,
@@ -422,6 +432,51 @@ class ExecutorAgent:
                     })
 
         return tool_calls
+
+    # ------------------------------------------------------------------
+    # Auto-wrap tool results (financial-research pattern)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _auto_wrap_from_tools(
+        tool_results: list[dict[str, Any]],
+    ) -> dict[str, Any] | None:
+        """Auto-wrap a tool result if it looks like a complete output.
+
+        Financial-research pattern: tools return complete, structured dicts
+        that are ready to use.  If the LLM fails to format the final JSON,
+        we take the LAST tool result that has meaningful fields and wrap it
+        in ``{status, output, concerns}`` directly — no LLM formatting needed.
+        """
+        if not tool_results:
+            return None
+
+        # Known complete-output field sets
+        _COMPLETE_FIELDS = [
+            {"listings", "total_scraped"},          # ScrapeResult
+            {"market", "outliers", "recommendation"}, # AnalysisReport
+            {"market", "segments"},
+        ]
+
+        # Try last result first, then work backwards
+        for tr in reversed(tool_results):
+            result = tr.get("result")
+            if not isinstance(result, dict):
+                continue
+            result_keys = set(result.keys())
+            for expected in _COMPLETE_FIELDS:
+                if expected.issubset(result_keys):
+                    logger.info(
+                        "Auto-wrapping tool result from %r (%d fields)",
+                        tr["name"], len(result_keys),
+                    )
+                    return {
+                        "status": "done",
+                        "output": result,
+                        "concerns": [],
+                    }
+
+        return None
 
     # ------------------------------------------------------------------
     # Output parsing  §2.4
