@@ -464,19 +464,25 @@ Executor Process
 
 ```toml
 [actions.fetch_web_page]
-tool = "crawl4ai"
-function = "AsyncWebCrawler.arun"
+tool = "llend.parsers.web_fetcher"
+function = "fetch_web_page"
 timeout_ms = 30000
 retry = 3
 
 [actions.fetch_web_page.config]
 stealth_mode = true
 user_agent = "llend-harness/0.1"
+platform = "auto"           # "ebay" | "amazon" | "auto" — controls extraction strategy
+extract_listings = false     # if true + known platform → CSS extraction; else markdown
+use_cache = true             # cache URL results to prevent duplicate crawls
 
 [actions.parse_listing_html]
-tool = "llend_harness.parsers"
+tool = "llend.parsers"
 function = "parse_product_listing"
 timeout_ms = 5000
+
+[actions.parse_listing_html.config]
+platform = "auto"            # hint for CSS selector matching; "auto" skips fallback
 
 [actions.export_csv]
 tool = "pandas"
@@ -545,7 +551,7 @@ def _signature_to_schema(func: object) -> dict[str, Any]:
     """
 ```
 
-**Example:** Function ``fetch_web_page(url: str, stealth_mode: bool = True)``
+**Example:** Function ``fetch_web_page(url: str, platform: str = "auto", stealth_mode: bool = True)``
 generates:
 
 ```json
@@ -553,6 +559,7 @@ generates:
   "type": "object",
   "properties": {
     "url": {"type": "string", "description": "url"},
+    "platform": {"type": "string", "description": "platform", "default": "auto"},
     "stealth_mode": {"type": "boolean", "description": "stealth_mode", "default": true}
   },
   "required": ["url"]
@@ -562,6 +569,23 @@ generates:
 > **Note:** ``**kwargs`` and ``*args`` are ignored.  Functions like
 > ``DataFrame.to_csv`` (instance methods) need a plain-function wrapper
 > — see ``llend/parsers/csv_exporter.py`` for an example.
+
+### 5.5 Extraction Strategy (Web Fetcher)
+
+The `fetch_web_page` action uses crawl4ai's dual extraction pattern
+(reference: crawl4ai codebase):
+
+| Platform | Strategy | Mechanism |
+|----------|----------|-----------|
+| Known (`"ebay"`, `"amazon"`) | CSS extraction | `JsonCssExtractionStrategy` with per-site schema — fast, deterministic, zero LLM cost |
+| Unknown (`"auto"`) | Markdown passthrough | Returns crawl4ai's clean markdown output — the Executor's ReAct-loop LLM extracts structured data itself (equivalent to `LLMExtractionStrategy` but without the extra API call) |
+
+**URL cache:** `fetch_web_page` maintains a module-level `_url_cache` dict to
+prevent duplicate crawling across retries. Same URL fetched once per session.
+
+**CSS extraction schemas** are defined in `llend/parsers/web_fetcher.py` in
+the `_KNOWN_SCHEMAS` dict. Adding a new known site requires only adding its
+CSS schema — no changes to the skill or tool bridge.
 
 ### 5.3 Why TOML + Python (not just TOML)
 
