@@ -725,6 +725,15 @@ class OrchestratorAgent:
                     continue
 
             # --- Step 6-8: Reviewer cycle  §4.2 ---
+            # Skip Reviewer if output was produced by handler code (not LLM).
+            # Handler outputs are guaranteed correct format (financial-research pattern).
+            if result_msg.payload.get("_handler_produced"):
+                await self._progress.task_complete(
+                    task_spec, task_id, total,
+                    f"Completed {task_spec.skill_name}.",
+                )
+                return output
+
             reviewer_id = await self._runtime.spawn(
                 AgentType.REVIEWER.value,
                 context={"task_spec": task_spec.task_spec},

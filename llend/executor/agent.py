@@ -499,6 +499,7 @@ class ExecutorAgent:
                         "status": "done",
                         "output": result,
                         "concerns": [],
+                        "_handler_produced": True,
                     }
 
         return None
@@ -573,6 +574,8 @@ class ExecutorAgent:
                 "status": status.value,
                 "output": result.get("output"),
                 "concerns": result.get("concerns", []),
+                # Flag: output came from handler code, not LLM — skip Reviewer
+                "_handler_produced": result.get("_handler_produced", False),
             },
         )
         await self._runtime.send(msg)
