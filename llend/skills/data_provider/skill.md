@@ -6,6 +6,7 @@ inputs: platform:str, query:str, max_items:int=500
 outputs: ScrapeResult
 actions:
   - fetch_web_page
+  - get_cached_listings
 dependencies: []
 enforcement: suggested
 ---
@@ -14,18 +15,15 @@ enforcement: suggested
 
 ## Flow
 1. Receive platform + query from Orchestrator
-2. Crawl + extract listings via `fetch_web_page` (uses CSS for known sites, LLM for unknown)
-3. Clean and normalize fields (price, title, condition, seller, shipping)
-4. Deduplicate listings
-5. Return `ScrapeResult` with validated product listings
+2. Call `fetch_web_page` for 3-5 key URLs (search page + top product pages).
+   Each call already returns structured `listings` — no parsing needed.
+3. Call `get_cached_listings(platform, query)` to get ALL accumulated listings
+   in `ScrapeResult` format (pre-aggregated, deduplicated).
+4. Use the returned result directly as your output.
 
 ## Notes
-- **Always call `fetch_web_page` with `extract_listings=true`** — the tool
-  already returns structured listings (CSS extraction for eBay/Amazon, LLM
-  extraction for unknown sites).  No separate parsing step needed.
-- The `listings` field in the response contains the structured product data.
-  Aggregate listings from all fetched URLs into a single `ScrapeResult`.
-- Rate limiting: respect platform's robots.txt, add 1-3s delay between pages.
-- If results exceed `max_items`, use pagination to collect more.
-- If platform blocks the scraper (CAPTCHA, 403), raise `interrupt` to ask human for alternative approach.
-- Default max_items=500 works for quick analysis. Increase for comprehensive reports.
+- **Always call `fetch_web_page` with `extract_listings=true`**.
+- **Limit to 3-5 URLs max** — the `get_cached_listings` action handles
+  aggregation.  Do NOT fetch more than 5 URLs.
+- **Call `get_cached_listings` as your LAST action** — it returns the final
+  aggregated result.  Use its output directly (no further processing needed).

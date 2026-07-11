@@ -1,7 +1,10 @@
 """Handler for data_provider skill — scraping orchestration.  Spec 002 §4.3.
 
-Provides the ``fetch_web_page`` and ``parse_listing_html`` custom actions
-that are NOT covered by the global tool bridge (§5.1).
+Provides the ``get_cached_listings`` custom action that aggregates
+pre-extracted listings from ``fetch_web_page`` (which stores results
+in ``web_fetcher._url_cache``).  The Executor LLM calls ``fetch_web_page``
+for multiple URLs, then calls ``get_cached_listings`` to get the
+pre-aggregated result in ``ScrapeResult`` format.
 """
 
 import logging
@@ -12,23 +15,50 @@ logger = logging.getLogger(__name__)
 class DataProviderSkill:
     """Handler for data_provider skill."""
 
-    async def fetch_web_page(self, url: str) -> dict:
+    async def get_cached_listings(
+        self, platform: str = "", query: str = ""
+    ) -> dict:
         """
-        Fetch a web page and return its content.
-        INPUT: url: str — the page URL to fetch
-        OUTPUT: {status: int, html: str, url: str}
+        Return all listings accumulated by fetch_web_page calls.
+        INPUT: platform: str — platform name (e.g. 'cellphones.com.vn')
+        INPUT: query: str — search query used
+        OUTPUT: {listings: list[dict], total_scraped: int, total_valid: int, platform: str, query: str, errors: list}
         """
-        # This is a placeholder — in production, this delegates to the global
-        # tool bridge (crawl4ai) via ActionDispatcher. The custom action exists
-        # so the skill can add platform-specific logic (e.g. eBay pagination
-        # URL construction) before calling the global fetcher.
-        return {"status": 200, "html": "", "url": url}
+        from llend.parsers.web_fetcher import _url_cache
 
-    async def parse_listing_html(self, html: str, schema: dict) -> list[dict]:
-        """
-        Parse HTML content into structured listing data using a CSS schema.
-        INPUT: html: str — raw HTML content
-        INPUT: schema: dict — CSS selector schema for extraction
-        OUTPUT: list of {title, price, condition, seller, shipping, url} dicts
-        """
-        return []
+        all_listings: list[dict] = []
+        errors: list[str] = []
+
+        for url, cached in _url_cache.items():
+            if cached.get("success") and cached.get("listings"):
+                all_listings.extend(cached["listings"])
+            elif not cached.get("success"):
+                errors.append(f"Failed to fetch {url}: status {cached.get('status_code')}")
+
+        # Deduplicate by URL
+        seen_urls: set[str] = set()
+        unique: list[dict] = []
+        for item in all_listings:
+            item_url = item.get("url", "")
+            if item_url and item_url not in seen_urls:
+                seen_urls.add(item_url)
+                unique.append(item)
+            elif not item_url:
+                unique.append(item)
+
+        total = len(all_listings)
+        valid = len(unique)
+
+        logger.info(
+            "get_cached_listings: %d total, %d unique from %d cached URLs",
+            total, valid, len(_url_cache),
+        )
+
+        return {
+            "listings": unique,
+            "total_scraped": total,
+            "total_valid": valid,
+            "platform": platform,
+            "query": query,
+            "errors": errors,
+        }
