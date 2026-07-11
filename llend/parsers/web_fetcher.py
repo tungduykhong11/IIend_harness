@@ -217,6 +217,14 @@ async def fetch_web_page(
         "listing_count": len(listings),               # this URL's count
         "total_accumulated": total_accumulated,       # running total across all URLs
         "total_errors": len(_accumulated_errors),
+        # The full accumulated result — LLM can use this directly as output.
+        # No need to call a separate aggregation action.
+        "accumulated": {
+            "listings": _accumulated_listings,
+            "total_scraped": total_accumulated,
+            "total_valid": total_accumulated,
+            "errors": list(_accumulated_errors),
+        },
     }
     # Only include markdown if there are no structured listings
     if not listings:
