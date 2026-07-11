@@ -6,7 +6,6 @@ inputs: platform:str, query:str, max_items:int=500
 outputs: ScrapeResult
 actions:
   - fetch_web_page
-  - parse_listing_html
 dependencies: []
 enforcement: suggested
 ---
@@ -15,11 +14,10 @@ enforcement: suggested
 
 ## Flow
 1. Receive platform + query from Orchestrator
-2. Crawl the platform's search results via `fetch_web_page`
-3. Parse listing HTML via `parse_listing_html`
-4. Clean and normalize fields (price, title, condition, seller, shipping)
-5. Deduplicate listings
-6. Return `ScrapeResult` with validated product listings
+2. Crawl + extract listings via `fetch_web_page` (uses CSS for known sites, LLM for unknown)
+3. Clean and normalize fields (price, title, condition, seller, shipping)
+4. Deduplicate listings
+5. Return `ScrapeResult` with validated product listings
 
 ## Notes
 - Rate limiting: respect platform's robots.txt, add 1-3s delay between pages.
