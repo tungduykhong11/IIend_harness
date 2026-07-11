@@ -176,16 +176,22 @@ async def fetch_web_page(
         except Exception:
             logger.warning("Failed to parse extracted content", exc_info=True)
 
+    # When we have structured listings, return only the listings + summary —
+    # don't overload the Executor LLM with raw HTML/markdown (50KB+ per URL).
+    # The LLM needs to aggregate results from multiple URLs, so keep each
+    # response light.
     response = {
         "url": url,
-        "markdown": result.markdown[:50000] if result.markdown else "",
-        "cleaned_html": result.cleaned_html[:50000] if result.cleaned_html else "",
         "title": getattr(result, "title", ""),
         "success": result.success,
         "status_code": getattr(result, "status_code", 0),
         "listings": listings,
         "listing_count": len(listings),
     }
+    # Only include markdown if there are no structured listings
+    if not listings:
+        response["markdown"] = result.markdown[:2000] if result.markdown else ""
+        response["cleaned_html"] = result.cleaned_html[:2000] if result.cleaned_html else ""
 
     # Cache the result
     if use_cache:
