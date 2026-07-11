@@ -63,6 +63,7 @@ _FIELD_SELECTORS: dict[str, list[str]] = {
 def parse_product_listing(
     html: str = "",
     schema: dict[str, Any] | None = None,
+    platform: str = "auto",
     **kwargs: Any,
 ) -> list[dict[str, Any]]:
     """Parse raw HTML into a list of product listing dicts.
@@ -74,6 +75,11 @@ def parse_product_listing(
     schema:
         Optional field schema.  If provided, only extract fields named in
         the schema's ``properties`` keys.  Otherwise extract all known fields.
+    platform:
+        Hint for the parser: ``"ebay"``, ``"amazon"``, or ``"auto"``.
+        When ``"auto"`` and no listing containers are found, returns an empty
+        list immediately (rather than trying the poor full-page fallback).
+        The Executor's LLM should handle extraction from markdown instead.
     **kwargs:
         Accepts ``_raw`` fallback from malformed LLM arguments — attempts
         to extract HTML content from it.
@@ -114,8 +120,22 @@ def parse_product_listing(
     listings = _find_listing_containers(soup)
 
     if not listings:
-        # Fallback: try to extract from the whole page
-        logger.warning("No listing containers found — extracting from full page")
+        if platform == "auto":
+            # Unknown platform — no CSS selectors match.  Don't waste time with
+            # the full-page fallback; return empty and let the Executor's LLM
+            # extract structured data from markdown instead.
+            logger.info(
+                "No listing containers found for platform=%r — "
+                "returning empty; Executor LLM should parse markdown",
+                platform,
+            )
+            return []
+        # Known platform but no containers — try full-page fallback
+        logger.warning(
+            "No listing containers found for platform=%r — "
+            "extracting from full page",
+            platform,
+        )
         listings = [soup]
 
     results: list[dict[str, Any]] = []
