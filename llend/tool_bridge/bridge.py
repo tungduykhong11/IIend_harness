@@ -110,7 +110,7 @@ class ToolBridge:
         # Auto-populate input_schema from function signature if not already set.
         # This lets the Executor build proper tool definitions for the LLM.
         if binding.input_schema is None:
-            binding.input_schema = _signature_to_schema(obj)
+            binding.input_schema = signature_to_schema(obj)
 
         return True
 
@@ -306,11 +306,14 @@ class ToolBridge:
 # ---------------------------------------------------------------------------
 
 
-def _signature_to_schema(func: object) -> dict[str, Any]:
+def signature_to_schema(func: object) -> dict[str, Any]:
     """Auto-generate a JSON Schema ``input_schema`` from *func*'s signature.
 
     Inspects parameter names, types, and defaults to produce a schema the
     LLM can use when deciding to call this tool.  ``**kwargs`` is ignored.
+
+    Also parses the docstring for parameter descriptions (``INPUT:``,
+    ``Args:``, or ``Parameters`` sections).
     """
     import inspect
 
@@ -318,6 +321,9 @@ def _signature_to_schema(func: object) -> dict[str, Any]:
         sig = inspect.signature(func)
     except (ValueError, TypeError):
         return {"type": "object", "properties": {}}
+
+    # Parse docstring for parameter descriptions
+    param_descriptions = _parse_docstring_params(func)
 
     type_map = {
         str: "string",
@@ -338,18 +344,9 @@ def _signature_to_schema(func: object) -> dict[str, Any]:
             continue
 
         annotation = param.annotation
-        if annotation is inspect.Parameter.empty:
-            json_type = "string"
-        else:
-            # Handle generic types like list[str], dict[str, Any], str | None
-            origin = getattr(annotation, "__origin__", None)
-            if origin is not None:
-                # It's a generic — use the origin type
-                json_type = type_map.get(origin, "string")
-            else:
-                json_type = type_map.get(annotation, "string")
-
-        prop: dict[str, Any] = {"type": json_type, "description": name}
+        prop = _annotation_to_prop(annotation, type_map, name)
+        # Use docstring description if available, otherwise fall back to name
+        prop["description"] = param_descriptions.get(name, prop.get("description", name))
 
         if param.default is not inspect.Parameter.empty:
             prop["default"] = param.default
@@ -358,14 +355,78 @@ def _signature_to_schema(func: object) -> dict[str, Any]:
 
         properties[name] = prop
 
-    return {
-        "type": "object",
-        "properties": properties,
-        "required": required,
-    } if required else {
+    result: dict[str, Any] = {
         "type": "object",
         "properties": properties,
     }
+    if required:
+        result["required"] = required
+    return result
+
+
+def _annotation_to_prop(
+    annotation: Any, type_map: dict[Any, str], name: str
+) -> dict[str, Any]:
+    """Convert a Python type annotation to a JSON Schema property dict.
+
+    Handles generics like ``list[float]`` → ``{"type": "array", "items": {"type": "number"}}``.
+    """
+    import typing
+
+    # Generic types: list[float], dict[str, Any], Optional[int], etc.
+    origin = getattr(annotation, "__origin__", None)
+    if origin is not None:
+        json_type = type_map.get(origin, "string")
+        prop: dict[str, Any] = {"type": json_type, "description": name}
+
+        # Resolve type args: list[float] → items: {type: number}
+        type_args = getattr(annotation, "__args__", ())
+        if json_type == "array" and type_args:
+            inner = type_args[0]
+            if inner is not type(None):  # noqa: E721
+                prop["items"] = _annotation_to_prop(inner, type_map, f"{name}_item")
+        elif json_type == "object" and len(type_args) >= 2:
+            # dict[str, float] — JSON Schema doesn't do typed dicts well,
+            # so just note the value type
+            pass
+
+        return prop
+
+    # Plain types: str, int, float, bool, etc.
+    json_type = type_map.get(annotation, "string")
+    return {"type": json_type, "description": name}
+
+
+def _parse_docstring_params(func: object) -> dict[str, str]:
+    """Extract parameter descriptions from a function's docstring.
+
+    Supports three formats:
+    - ``INPUT: name: type — description`` (llend custom format)
+    - ``Args: name: description`` (Google style)
+    - ``Parameters: name: description`` (Sphinx style)
+    """
+    import inspect, re
+
+    doc = inspect.getdoc(func)
+    if not doc:
+        return {}
+
+    descriptions: dict[str, str] = {}
+
+    # Format 1: llend custom — "INPUT: name: type — description"
+    for m in re.finditer(r'INPUT:\s+(\w+):\s*\S+\s*[—–-]\s*(.+)', doc):
+        descriptions[m.group(1)] = m.group(2).strip()
+
+    # Format 2: Google-style "    name: description"
+    if not descriptions:
+        for m in re.finditer(r'^\s{4}(\w+):\s*(.+)$', doc, re.MULTILINE):
+            name = m.group(1)
+            desc = m.group(2).strip()
+            if name.lower() in ("returns", "raises", "yields"):
+                continue
+            descriptions[name] = desc
+
+    return descriptions
 
     @staticmethod
     def _coerce_env_value(value: str) -> int | float | bool | str:

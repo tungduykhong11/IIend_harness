@@ -62,20 +62,27 @@ your own defaults.
 ## Available Tools
 {tool_descriptions}
 
+**How to use the tools:** Each tool returns structured data.  Read the
+return value carefully — the `listings` field (if present) already contains
+extracted product data.  Aggregate results from multiple tool calls into
+a single output.  Call tools with ALL required parameters.
+
 ## Instructions
 1. Read the task spec carefully. Understand what output is expected.
 2. Use the available tools to gather data or perform actions.
-3. If you need data from a tool, CALL it. Don't guess — use tools for real data.
+3. If you need data from a tool, CALL it with all required arguments.
+   Don't guess — use tools for real data.
 4. When you have everything you need, produce the final output.
 5. If something is wrong or uncertain, report it in "concerns".
-6. Output must match the expected schema: {output_schema}
+6. Your `output` field MUST be a valid JSON object matching this schema:
+{output_schema}
 
 ## Output Format
-Respond with JSON:
+Respond with a single JSON object (no markdown fences, no extra text):
 {{
-  "status": "done" | "done_with_concerns" | "partial" | "error",
-  "output": <task output — must match the expected schema>,
-  "concerns": ["list of concerns, if any"]
+  "status": "done",
+  "output": <JSON object matching the expected schema above>,
+  "concerns": []
 }}"""
 
 

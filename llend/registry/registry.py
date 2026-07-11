@@ -28,7 +28,7 @@ from llend.registry.validator import (
     _import_module_from_path,
     validate_skill,
 )
-from llend.tool_bridge.bridge import ToolBridge
+from llend.tool_bridge.bridge import ToolBridge, signature_to_schema
 
 logger = logging.getLogger(__name__)
 
@@ -328,11 +328,20 @@ class SkillRegistry:
 
             # Try custom
             if action_name in custom_actions:
+                # Auto-generate input_schema from handler method signature
+                # so the LLM knows what parameters to pass (e.g. prices: list[float])
+                input_schema = None
+                if handler_cls is not None:
+                    method = getattr(handler_cls, action_name, None)
+                    if method is not None:
+                        input_schema = signature_to_schema(method)
+
                 bindings[action_name] = ActionBinding(
                     action_name=action_name,
                     source="custom",
                     function=action_name,
                     handler_class=handler_cls.__name__ if handler_cls else None,
+                    input_schema=input_schema,
                 )
                 continue
 
