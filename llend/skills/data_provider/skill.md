@@ -24,3 +24,5 @@ enforcement: suggested
 - **Always call `fetch_web_page` with `extract_listings=true`**.
 - **Limit to 3-5 URLs.** The accumulator handles combination.
 - **Use `response["accumulated"]` as your final output** — it's pre-formatted.
+- **Build URLs from the platform domain in task_spec** — do NOT guess or
+  invent domains.  If task_spec says "cellphones.com.vn", use exactly that.
