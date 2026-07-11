@@ -84,7 +84,7 @@ class ProgressReporter:
     async def plan_start(self, plan: ExecutionPlan) -> None:
         """Emit the plan overview.  §12.1."""
         skill_names = [ts.skill_name for ts in plan.skills]
-        path = " → ".join(skill_names)
+        path = " -> ".join(skill_names)
         await self.emit(ProgressEvent(
             level="info",
             message=f"[PLAN] {path} ({len(plan.skills)} task(s))",
@@ -168,11 +168,11 @@ def format_plan_progress(
     for ts in plan.skills:
         if ts.skill_name in completed:
             detail = details.get(ts.skill_name, "")
-            suffix = f" — completed ({detail})" if detail else " — completed"
+            suffix = f" - completed ({detail})" if detail else " - completed"
             lines.append(f"  [OK] {ts.skill_name}{suffix}")
         elif ts.skill_name == active:
-            suffix = f" — running ({active_detail})" if active_detail else " — running"
+            suffix = f" - running ({active_detail})" if active_detail else " - running"
             lines.append(f"  [...] {ts.skill_name}{suffix}")
         else:
-            lines.append(f"  [--] {ts.skill_name} — waiting")
+            lines.append(f"  [--] {ts.skill_name} - waiting")
     return "\n".join(lines)
