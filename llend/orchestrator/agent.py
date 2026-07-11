@@ -326,12 +326,9 @@ class OrchestratorAgent:
                 await self._runtime.kill(self._responder_id)
                 self._responder_id = None
 
-            # Send session.complete to Runtime
-            await self._send_message(
-                recipient="runtime",
-                msg_type=MsgType.SESSION_COMPLETE,
-                payload={"synthesis": synthesis},
-            )
+            # session.complete removed — same reason as session.start:
+            # runtime is not a routable agent; synthesis is already saved
+            # to disk by _session_mgr.complete() above.
         except Exception:
             logger.exception("Error during shutdown sequence")
 
