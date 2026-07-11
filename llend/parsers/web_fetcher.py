@@ -68,7 +68,10 @@ _KNOWN_SCHEMAS: dict[str, dict[str, Any]] = {
 
 _EXTRACTION_INSTRUCTION = (
     "Extract all product listings from this page. "
-    "For each listing, extract: title, price (as a number), currency, "
+    "For each listing, extract: title, price (as a number — convert "
+    "Vietnamese format like '12.990.000₫' or '12,990,000 VND' to plain "
+    "number 12990000, strip all separators and currency symbols), "
+    "currency (VND if Vietnamese dong), "
     "condition (new/used/unknown), seller name, shipping info, "
     "and the product URL."
 )
@@ -84,7 +87,7 @@ _EXTRACTION_SCHEMA = {
                 "type": "object",
                 "properties": {
                     "title": {"type": "string", "description": "Product title"},
-                    "price": {"type": "number", "description": "Price in listing currency"},
+                    "price": {"type": "number", "description": "Numeric price (strip dots, commas, currency symbols; e.g. 12.990.000₫ → 12990000)"},
                     "currency": {"type": "string", "description": "ISO 4217 currency code", "default": "VND"},
                     "condition": {"type": "string", "description": "new, used, or unknown", "default": "unknown"},
                     "seller": {"type": "string", "description": "Seller name", "default": "unknown"},
