@@ -17,6 +17,13 @@ venv/
 # Secrets
 .env
 
+# Session output (generated at runtime)
+/output/
+
+# Test artifacts
+*.csv
+*.xlsx
+
 # OS
 .DS_Store
 Thumbs.db
