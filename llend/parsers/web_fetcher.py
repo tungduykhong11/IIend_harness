@@ -109,7 +109,7 @@ async def fetch_web_page(
     platform: str = "auto",
     stealth_mode: bool = True,
     user_agent: str = "llend-harness/0.1",
-    extract_listings: bool = False,
+    extract_listings: bool = True,
     use_cache: bool = True,
     **kwargs: Any,
 ) -> dict[str, Any]:
