@@ -352,8 +352,6 @@ class ExecutorAgent:
             response_text = await self._llm.generate(messages, tools=tools if tools else None)
 
             # Check if LLM wants to call a tool (function-calling response).
-            # In non-streaming mode, the LLM may return tool_calls in the
-            # response alongside or instead of text content.  We handle both.
             tool_calls = await self._extract_tool_calls(messages, response_text, tools)
 
             if tool_calls:
@@ -365,12 +363,18 @@ class ExecutorAgent:
                             tc["name"], tc.get("arguments", {}),
                         )
                         _tool_results.append({"name": tc["name"], "result": result})
+
+                        # Financial-research pattern: if a tool returned a
+                        # complete result, skip LLM output — use it directly.
+                        wrapped = self._auto_wrap_from_tools(_tool_results)
+                        if wrapped is not None:
+                            return wrapped
+
                         messages.append({
                             "role": "user",
                             "content": f"Tool result for {tc['name']}: {_json.dumps(result, default=str)}",
                         })
                     except ActionDispatchError as exc:
-                        # §2.6: Tool call fails → let LLM decide: retry or error
                         messages.append({
                             "role": "user",
                             "content": f"Tool error for {tc['name']}: {exc}",
