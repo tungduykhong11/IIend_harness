@@ -7,7 +7,7 @@ outputs: ScrapeResult
 actions:
   - search_listings
 dependencies: []
-enforcement: suggested
+enforcement: strict
 ---
 
 # Data Provider Skill
