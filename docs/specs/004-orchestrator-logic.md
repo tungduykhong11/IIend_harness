@@ -203,7 +203,21 @@ Step 5: Validate output schema
   → If no output_schema (primitive output):
       → Send to Reviewer for quality check
 
-Step 6-8: Reviewer Cycle
+Step 5b: Check for handler-produced output  (v0.1 — financial-research pattern)
+  → If result_msg.payload.get("_handler_produced"):
+      → **Skip Reviewer entirely.**  Output came from trusted handler.py code,
+        not LLM — guaranteed correct format, no hallucination risk.
+      → Extract human-readable recommendation from handler output:
+          _extract_recommendation(output) → e.g. "Giá trung bình 24.5 triệu VNĐ..."
+      → Create TaskResultSummary with recommendation text + key metrics.
+      → Return output immediately — no Reviewer spawn, no verdict wait.
+  → Rationale: Reviewer has no value add for code-produced output.  It would
+    either pass (format is correct by construction) or fail spuriously
+    (not understanding the handler's business logic).  The financial-research
+    pattern (Spec 002 §5.5) trades off review for speed and reliability.
+    See Spec 001 §2.6 for the full handler-produced output flow.
+
+Step 6-8: Reviewer Cycle  (SKIPPED if _handler_produced — see Step 5b)
   → Build adversarial system_prompt from template (§4.5), filling in:
       {task_spec}, {output_schema}, {enforcement}, {executor_output}, {concerns}
   → Spawn Reviewer (fresh context)
@@ -871,36 +885,34 @@ SkillPipeline.build_plan("analyze_pricing", {target_item: "iPhone 15"})
   → ExecutionPlan: [data_provider, analyze_pricing]
   │
   ▼
-Task 1: data_provider
+Task 1: data_provider  (financial-research pattern — skip Reviewer)
   ├── Spawn Executor #1
   ├── task.dispatch → Executor
-  ├── Executor runs (ActionDispatcher calls crawl4ai)
+  ├── Executor LLM calls search_listings(platform, query) ← 1 CALL
+  ├── Handler crawls 5 URLs, extracts via LLMExtractionStrategy, aggregates
+  ├── Auto-wrap: {status:"done", output:ScrapeResult, _handler_produced:true}
   ├── task.result → Orchestrator
-  ├── Validate output (ScrapeResult ✓)
-  ├── Spawn Reviewer #1
-  ├── task.review → Reviewer
-  ├── task.verdict: PASS ✓
+  ├── _handler_produced? YES → **Skip Reviewer** (trust handler code)
+  ├── Extract recommendation text + key metrics from output
   └── Summarize → TaskResultSummary
   │
   ▼
-Task 2: analyze_pricing
-  ├── Wire dataset_ref = Task 1 output
+Task 2: analyze_pricing  (financial-research pattern — skip Reviewer)
+  ├── Wire dataset = Task 1 output
   ├── Spawn Executor #2
   ├── task.dispatch → Executor
-  ├── Executor runs (ActionDispatcher: calc median, detect outliers, segment, export CSV)
+  ├── Executor LLM calls analyze_prices(dataset) ← 1 CALL
+  ├── Handler computes stats, outliers, segments, recommendation text
+  ├── Auto-wrap: {status:"done", output:AnalysisReport, _handler_produced:true}
   ├── task.result → Orchestrator
-  ├── Validate output (AnalysisReport ✓)
-  ├── Spawn Reviewer #2
-  ├── task.review → Reviewer
-  ├── task.verdict: PASS ✓
+  ├── _handler_produced? YES → **Skip Reviewer** (trust handler code)
   └── Summarize → TaskResultSummary
   │
   ▼
 Session complete:
-  ├── Final synthesis: "Median $325. 8 suspicious listings. Report saved."
+  ├── Final synthesis: "Median 24.5M VNĐ. Range: 13M-32M. Report saved."
   ├── Save artifacts
-  ├── Update user profile
-  └── session.complete → Runtime
+  └── Update user profile
 ```
 
 ---

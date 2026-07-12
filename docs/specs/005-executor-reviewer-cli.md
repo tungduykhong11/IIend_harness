@@ -248,6 +248,64 @@ llend/executor/
 └── agent.py             # ExecutorAgent class
 ```
 
+### 2.8 Auto-Wrap & Handler Detection (v0.1 — financial-research pattern)
+
+When a handler action returns a complete, structured result, the Executor
+auto-wraps it as the final output — no LLM formatting required.  This
+eliminates LLM hallucination risk for code-produced data and speeds up task
+completion.
+
+**Flow:**
+
+```
+Executor ReAct loop  §2.4
+  │
+  ├── LLM calls tool → ActionDispatcher.dispatch() → handler returns {listings, total_scraped}
+  │
+  ├── _auto_wrap_from_tools() checks if result matches known complete-output patterns:
+  │     _COMPLETE_FIELDS = [
+  │       {"listings", "total_scraped"},          # ScrapeResult (data_provider)
+  │       {"market", "outliers", "recommendation"}, # AnalysisReport (analyze_pricing)
+  │       {"market", "segments"},                  # segmented analysis
+  │     ]
+  │
+  ├── Match? → auto-wrap immediately:
+  │     return {status: "done", output: <handler result>,
+  │             concerns: [], _handler_produced: true}
+  │
+  └── No match? → feed tool result back to LLM for output formatting
+```
+
+**Detection order** (in `_react_loop()`):
+
+1. **After each tool call** — check immediately, return if match (fast path).
+2. **After LLM produces output but fails JSON parse** — fallback auto-wrap.
+3. **After `_is_empty_output()` check** — if LLM output has no meaningful fields,
+   prefer tool result.
+4. **After max tool calls exhausted** — last-resort auto-wrap.
+
+**`_handler_produced` flag propagation:**
+
+```python
+# In _send_result():
+payload = {
+    "task_id": self._task_id,
+    "status": status.value,
+    "output": result.get("output"),
+    "concerns": result.get("concerns", []),
+    "_handler_produced": result.get("_handler_produced", False),  # ← key flag
+}
+```
+
+When the Orchestrator receives `task.result` with `_handler_produced: true`,
+it skips the entire Reviewer cycle (Spec 001 §2.6, Spec 004 §4.2 Step 5b).
+
+**Empty output detection** (`_is_empty_output()`):
+If the LLM produces a JSON output but it lacks meaningful fields (e.g. empty
+`{}`), the Executor falls back to auto-wrap from tool results.  Meaningful
+fields include: `listings`, `market`, `median`, `total_scraped`,
+`recommendation`, `price`, `title`.
+
 ---
 
 ## 3. Reviewer Agent

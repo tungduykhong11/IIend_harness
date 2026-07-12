@@ -448,6 +448,15 @@ Executor Process
 
 4. Result is injected back into LLM context. LLM continues reasoning → may call more actions → eventually produces final output.
 
+   **Auto-wrap (financial-research pattern):** When a handler action returns a
+   complete, structured result (e.g. ``{listings, total_scraped}`` from
+   ``search_listings``), the Executor detects this via ``_auto_wrap_from_tools()``
+   and skips the LLM output formatting step.  The result is wrapped directly as
+   ``{status: "done", output: <result>, concerns: [], _handler_produced: true}``
+   and returned as ``task.result``.  This eliminates LLM hallucination risk for
+   code-produced data — the handler's structured output is trusted as-is.
+   See Spec 001 §2.6 for the full handler-produced output flow.
+
 5. If an action raises an exception → ActionDispatcher catches it, returns error to LLM context. LLM can retry or adapt. If retries exhausted → Executor sends `agent.error` to Orchestrator.
 
 **Action timeout & retry** are enforced by ActionDispatcher using `asyncio.wait_for()` and the `timeout_ms`/`retry` fields from `ActionBinding`.

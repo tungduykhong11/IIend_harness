@@ -53,7 +53,7 @@ class Message(BaseModel):
 | msg_type | Direction | Payload | Meaning |
 |----------|-----------|---------|---------|
 | `task.dispatch` | Orch → Executor | `{task_id, skill_name, task_spec, skill_context}` | Assign 1 task to a fresh Executor. `skill_context` contains skill definition, allowed actions, action bindings, and output schema — see Spec 002 §9. |
-| `task.result` | Executor → Orch | `{task_id, status: TaskStatus, output, concerns?: str[]}` | Executor's final output. `status` uses `TaskStatus` enum. `concerns` is Executor's own doubts (optional). Output validated against skill's output schema if present (Spec 002 §9.2). |
+| `task.result` | Executor → Orch | `{task_id, status: TaskStatus, output, concerns?: str[], _handler_produced?: bool}` | Executor's final output. `status` uses `TaskStatus` enum. `concerns` is Executor's own doubts (optional). `_handler_produced` is `True` when output came from handler.py code (not LLM) — see §2.6. Output validated against skill's output schema if present (Spec 002 §9.2). |
 | `task.review` | Orch → Reviewer | `{task_id, task_spec, executor_output, system_prompt, concerns?, schema_validation_issues?}` | Ask Reviewer to verify. `system_prompt` is the fully rendered adversarial review prompt (built by Orchestrator from template in Spec 004 §4.5). `concerns` are Executor's own doubts from `task.result` (if any). `schema_validation_issues` are from Orchestrator's output schema validation step (if any). Reviewer performs a single LLM call with this prompt and returns a verdict. |
 | `task.verdict` | Reviewer → Orch | `{task_id, verdict: Verdict, issues: ReviewIssue[], confidence: float}` | `verdict` uses `Verdict` enum. `issues` is a list of `ReviewIssue` objects. `confidence` is 0.0–1.0. |
 | `interrupt.raise` | Any → Orch | `{message, options: str[], context: {task_id, current_step, relevant_summary?}}` | Agent needs human judgment. `context` carries enough info for human to decide without reading full history. |
@@ -167,6 +167,41 @@ This is simpler than a full mesh and makes every decision traceable. It also mea
 ### 2.5 Reply Chains
 
 `parent_id` links messages into trees. When a Reviewer issues a verdict, `parent_id` points to the `task.dispatch` that started the chain. This enables full audit tracing: "show me the entire lifecycle of Task 3".
+
+### 2.6 Handler-Produced Output Pattern (v0.1)
+
+When a skill's `handler.py` produces the output directly (not the LLM), the Executor auto-wraps the result and sets `_handler_produced: true` in `task.result`. This signals the Orchestrator to **skip Reviewer entirely** — the output came from trusted developer code, not an LLM prone to hallucination.
+
+**Flow:**
+
+```
+Executor
+  │
+  ├── LLM calls tool (e.g. search_listings)
+  │   └── Handler method returns {listings, total_scraped, ...}
+  │
+  ├── Executor detects complete handler result
+  │   └── _auto_wrap_from_tools(): checks for known complete-output field sets
+  │       (e.g. {listings, total_scraped}, {market, outliers, recommendation})
+  │
+  ├── Auto-wrap: {status: "done", output: <handler result>,
+  │               concerns: [], _handler_produced: true}
+  │
+  └── task.result sent to Orchestrator
+        │
+        └── Orchestrator sees _handler_produced → skip Reviewer → done
+```
+
+**Rationale:** The `financial-research` pattern (Spec 002 §5.5) exposes tools that return complete, structured results — one tool call, one complete unit of work. The Executor's LLM orchestrates but the data comes from handler code. Reviewer has no value add here: it would always pass (format is correct by construction) or fail spuriously (not understanding the business logic).
+
+**Detection criteria** (in `_auto_wrap_from_tools()`):
+- `{listings, total_scraped}` — `ScrapeResult` from `data_provider`
+- `{market, outliers, recommendation}` — `AnalysisReport` from `analyze_pricing`
+- `{market, segments}` — segmented analysis output
+
+If none of these match, the Executor falls back to LLM output formatting (normal flow).
+
+---
 
 ---
 
