@@ -4,7 +4,9 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project: llend_harness
 
-A Python-native **Hierarchical Multi-Agent Harness** — a runtime that orchestrates AI agents through composable skills. Domain-agnostic: not tied to coding workflows. Currently in the design/research phase; no code yet.
+A Python-native **Hierarchical Multi-Agent Harness** — a runtime that orchestrates AI agents through composable skills. Domain-agnostic: not tied to coding workflows.
+
+**Status: v0.1 — end-to-end pipeline working.** First application (Market Researcher) runs: `data_provider` → `analyze_pricing` → recommendation text. Tested with DeepSeek V4 Pro on real e-commerce sites (cellphones.com.vn, eBay).
 
 ### Agent Topology
 
@@ -104,50 +106,33 @@ Executor (data_provider):
 
 Ứng dụng đầu tiên chạy trên harness này — tự động hóa toàn bộ quy trình nghiên cứu thị trường.
 
-Pipeline: `Tiếp nhận yêu cầu → Crawl + Làm sạch dữ liệu → Phân tích giá → Xuất báo cáo Excel`
+Pipeline: `Tiếp nhận yêu cầu → data_provider (crawl + clean) → analyze_pricing (stats + recommendation) → In kết quả`
 
-**Mỗi stage** có pattern: Orchestrator spawn Executor → đợi output → spawn Reviewer verify → pass thì tiếp, fail thì loop. Bất kỳ agent nào cũng có thể raise interrupt nếu gặp ambiguity:
+**v0.1 flow (financial-research pattern + skip Reviewer):**
 
 ```
         Orchestrator (sống suốt session)
               │
-              ├─ Stage 1: data_provider ──────────────────────────────────┐
-              │   ├─ spawn Executor: crawl + clean                        │
-              │   │   ├─ "Đã cào 15,000 listings, quá lớn"               │
-              │   │   ├─ ⚡ INTERRUPT: "Phân tích hết hay lọc 1,000?"    │
-              │   │   ├─ Human: "Lọc 1,000 dòng mới nhất"               │
-              │   │   └─ Resume: lọc + clean 1,000 dòng                  │
-              │   ├─ spawn Reviewer: verify dữ liệu                      │
-              │   │   ├─ đủ listing? outlier? field hợp lệ?              │
-              │   │   ├─ pass → tiếp                                     │
-              │   │   └─ fail → loop Executor mới                        │
-              │   └─ output: clean dataset                               │
+              ├─ Stage 1: data_provider ─────────────────────────────────┐
+              │   ├─ spawn Executor                                       │
+              │   │   └─ LLM calls search_listings(platform, query) ← 1 CALL
+              │   │       Handler crawls 5 URLs, LLMExtractionStrategy,
+              │   │       aggregates, returns ScrapeResult
+              │   ├─ Auto-wrap: {status:"done", output, _handler_produced:true}
+              │   └─ _handler_produced? YES → **skip Reviewer** → [OK]
               │                                                           │
-              ├─ Stage 2: analyze_pricing ────────────────────────────────┤
-              │   ├─ spawn Executor: phân tích giá                        │
-              │   ├─ spawn Reviewer: verify phân tích                     │
-              │   │   ├─ insight có evidence? số mâu thuẫn?              │
-              │   │   ├─ pass → tiếp                                     │
-              │   │   └─ fail → loop Executor mới                        │
-              │   └─ output: pricing insights                             │
+              ├─ Stage 2: analyze_pricing ───────────────────────────────┤
+              │   ├─ spawn Executor                                       │
+              │   │   └─ LLM calls analyze_prices(dataset) ← 1 CALL
+              │   │       Handler computes stats, outliers, segments,
+              │   │       recommendation text
+              │   ├─ Auto-wrap: {status:"done", output, _handler_produced:true}
+              │   └─ _handler_produced? YES → **skip Reviewer** → [OK]
               │                                                           │
-              ├─ Stage 3: write_report ───────────────────────────────────┤
-              │   ├─ spawn Executor: tạo Excel                            │
-              │   ├─ spawn Reviewer: verify báo cáo                       │
-              │   │   ├─ đúng format? chart chính xác?                   │
-              │   │   ├─ pass → done                                     │
-              │   │   └─ fail → loop Executor mới                        │
-              │   └─ output: report.xlsx                                  │
-              │                                                           │
-              └─ Tổng hợp → trả kết quả cho human                         │
+              └─ Hiển thị recommendation text cho human                   │
 ```
 
-**Tại mỗi stage:** Executor làm, Reviewer kiểm — 2 mindset khác nhau. Reviewer có quyền bắt làm lại nếu output không đạt spec.
-
-**Tại sao Reviewer được gọi sau mỗi Executor thay vì để Orchestrator tự kiểm?**
-- Reviewer cần **adversarial mindset** ("refute đi", "có chắc số này đúng không?") — khác hẳn mindset "quản lý" của Orchestrator
-- Giảm context overload cho Orchestrator
-- Reviewer cũng disposable, fresh context → không bias bởi output của stage trước
+**Reviewer chỉ được gọi khi Executor output là do LLM sinh ra** (không có handler, hoặc handler không return complete result). Khi handler.py code tự produce output → trust & skip.
 
 ### Reference Implementations
 
@@ -254,25 +239,66 @@ Neither reference alone is sufficient. llend_harness synthesizes both:
 | Testing | Manual tmux | None | Automated skill test harness |
 | Observability | None | Logging | Structured logging + OpenTelemetry |
 
-### Architecture Direction (draft)
+### Architecture (v0.1 — implemented)
 
 ```
-llend_harness/
-├── runtime/          # Core event loop, task scheduler, message bus
-├── skills/           # Skill definitions (SKILL.md + optional code)
-│   └── data_provider/  # Market Researcher scraping skill (uses crawl4AI)
-├── registry/         # Skill discovery, versioning, dependencies
-├── tool_bridge/      # Action vocabulary → concrete tool mappings (crawl4AI registered here)
-├── bootstrap/        # Session initialization, context injection
-├── telemetry/        # Logging, tracing, metrics
-├── testing/          # Skill test harness
-├── plugins/          # Harness adapter plugins
-└── docs/             # Design docs, specs
-
-Dependencies (for Market Researcher):
-├── crawl4ai/         # Scraping engine (Apache 2.0) — used by data_provider skill
-├── openpyxl/         # Excel report generation (write_report skill)
-└── pandas/           # Data manipulation (shared across skills)
+llend/
+├── __main__.py           # CLI entry: python -m llend
+├── __init__.py
+├── settings.toml         # Global config (orchestrator, execution, llm, session)
+├── runtime/              # Spec 001 — asyncio event loop, message bus, lifecycle
+│   ├── base.py           #   AgentRuntime ABC
+│   ├── asyncio_runtime.py #  v0 primary backend
+│   ├── langgraph_runtime.py # Future LangGraph backend
+│   ├── message.py        #   Message envelope, MsgType, enums
+│   ├── lifecycle.py      #   AgentState, AgentType
+│   ├── checkpoint.py     #   Interrupt checkpoint persistence
+│   └── notifications.py  #   Human notification channels
+├── registry/             # Spec 002 — skill discovery, validation, resolution
+│   ├── registry.py       #   SkillRegistry
+│   ├── models.py         #   SkillMeta, Skill, ActionBinding, ValidationIssue
+│   ├── pipeline.py       #   SkillPipeline, TaskSpec, ExecutionPlan
+│   ├── parser.py         #   Input parser (skill.md frontmatter)
+│   ├── validator.py      #   Skill validation logic
+│   └── action_dispatcher.py # ActionDispatcher (global + custom routing)
+├── tool_bridge/          # Spec 002 — global action→tool mapping
+│   ├── bridge.py         #   ToolBridge + auto input_schema from signatures
+│   └── mappings.toml     #   action → module.function bindings
+├── skills/               # Skill definitions (SKILL.md + handler.py + models.py)
+│   ├── data_provider/    #   search_listings (financial-research pattern)
+│   └── analyze_pricing/  #   analyze_prices (financial-research pattern)
+├── orchestrator/         # Spec 004 — central hub: classify, plan, dispatch, adjudicate
+│   ├── agent.py          #   OrchestratorAgent (main loop, session lifecycle)
+│   ├── classifier.py     #   Message classification (task vs conversational)
+│   ├── executor.py       #   Task execution loop (extracted module)
+│   ├── adjudicator.py    #   Verdict adjudication + retry logic
+│   ├── summarizer.py     #   TaskResultSummary + final synthesis
+│   ├── wiring.py         #   Input/output wiring + auto-unwrap
+│   ├── gate.py           #   Responder tool approval gate
+│   ├── recovery.py       #   Error recovery + exponential backoff
+│   ├── progress.py       #   Progress reporting
+│   ├── session.py        #   Session state, start/complete lifecycle
+│   └── config.py         #   OrchestratorConfig (Pydantic model)
+├── executor/             # Spec 005 — ReAct loop, tool-use, auto-wrap
+│   ├── agent.py          #   ExecutorAgent (ReAct loop, _auto_wrap_from_tools)
+│   └── __init__.py
+├── reviewer/             # Spec 001/004 — adversarial verification
+│   ├── agent.py          #   ReviewerAgent (single LLM call, verdict)
+│   └── __init__.py
+├── responder/            # Spec 003 — conversational Q&A
+│   ├── agent.py          #   ResponderAgent
+│   ├── context.py        #   SessionContext, TaskResultSummary
+│   ├── persona.py        #   Persona enum, prompts
+│   ├── memory.py         #   UserProfile load/save
+│   └── stream.py         #   Streaming chunk assembly
+├── parsers/              # Web fetcher, HTML parser, CSV exporter
+│   ├── web_fetcher.py    #   crawl4ai integration, URL cache, accumulator
+│   ├── html_parser.py    #   CSS + LLM extraction strategies
+│   └── csv_exporter.py   #   CSV export wrapper
+├── llm/                  # LLM provider abstraction
+│   └── client.py         #   AnthropicClient, DeepSeekClient, create_llm_client()
+├── docs/specs/           # Spec documents (001-006)
+└── tests/                # Test suite (pytest)
 ```
 
 ### Key Design Decisions (so far)
@@ -282,3 +308,38 @@ Dependencies (for Market Researcher):
 3. **Code + Markdown skills**: Simple skills are markdown-only; complex skills can include Python handlers.
 4. **Configurable enforcement**: Unlike superpowers' "mandatory only" approach, llend_harness supports levels.
 5. **Batteries-included testing**: Skill authors get a test harness — mock agent context, assert skill behavior.
+
+### v0.1 Patterns (Implemented)
+
+**Financial-Research Pattern (1 tool = 1 complete unit of work):**
+Skills expose high-level actions, not low-level primitives. `data_provider` has ONE action `search_listings(platform, query)` that internally crawls 3-5 URLs, extracts via LLMExtractionStrategy, aggregates, and returns a complete `ScrapeResult`. The Executor LLM calls ONE action — no URL construction, no aggregation, no dedup.
+
+**Auto-Wrap & Skip Reviewer:**
+When `handler.py` produces the output (not LLM), the Executor auto-detects complete results via `_auto_wrap_from_tools()` and wraps them as `{status: "done", output: <result>, concerns: [], _handler_produced: true}`. The Orchestrator sees `_handler_produced: true` → **skips Reviewer entirely**. Rationale: handler code is trusted — no hallucination risk. Reviewer adds no value for code-produced output.
+
+**LLMExtractionStrategy (unknown sites):**
+For unknown e-commerce sites, `web_fetcher.py` uses crawl4ai's `LLMExtractionStrategy` with schema + instruction + `force_json_response`. Known sites (eBay, Amazon) use fast `JsonCssExtractionStrategy` (CSS). Vietnamese price format handling: `12.990.000₫` → `12990000`.
+
+**URL Cache + Accumulator:**
+Module-level `_url_cache`, `_accumulated_listings`, `_accumulated_errors` in `web_fetcher.py`. Each `fetch_web_page` call adds to the accumulator. `clear_cache()` between searches.
+
+**Custom Action `input_schema` Auto-Generate:**
+`ToolBridge.validate_mapping()` and `SkillRegistry._resolve_custom_bindings()` auto-generate JSON Schema from Python function signatures (`inspect.signature` + type annotations). Supports `list[float]` → `array items: number`.
+
+### Branch → Spec Mapping
+
+| Branch | Spec | Component |
+|--------|------|-----------|
+| `feat/runtime-core` | [001](docs/specs/001-message-protocol-runtime-core.md) | Message protocol, AgentRuntime, lifecycle |
+| `feat/skill-registry` | [002](docs/specs/002-skill-format-registry.md) | Skill format, registry, tool bridge, pipeline |
+| `feat/responder-agent` | [003](docs/specs/003-responder-agent-conversation-module.md) | Responder, conversation, persona |
+| `feat/orchestrator` | [004](docs/specs/004-orchestrator-logic.md) | Orchestrator, classify, dispatch, adjudicate |
+| `feat/executor-reviewer` | [005](docs/specs/005-executor-reviewer-cli.md) | Executor, Reviewer, LLM providers, CLI bootstrap |
+| (none yet) | [006](docs/specs/006-testing.md) | Testing & skill test harness |
+
+### Git Workflow Rules
+
+1. **KHÔNG code thẳng trên `master`.** Mỗi component có branch riêng (xem bảng trên). Khi cần sửa code, xác định code đó thuộc spec/component nào → checkout branch tương ứng → sửa ở đó.
+2. **Sửa spec trước, code sau.** Mọi thay đổi behavior phải được document trong spec doc tương ứng TRƯỚC KHI viết code. Spec là source of truth.
+3. **Merge về master sau khi xong.** Khi feature hoàn tất trên branch → merge vào master.
+4. **Branch naming:** `feat/<component-name>` cho feature branches, khớp với spec number.
